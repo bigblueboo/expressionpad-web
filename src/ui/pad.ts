@@ -6,7 +6,7 @@ import { buildLayout, type Layout, type KeyShape } from '../core/layout'
 import { rowOffsets, SCALES } from '../core/scales'
 import { noteName } from '../core/notes'
 import type { Store } from '../core/state'
-import { TouchTracker } from './touch'
+import { TouchTracker, touchesToPad } from './touch'
 import { keyColors } from './colors'
 import type { VoiceSink } from '../audio/sink'
 
@@ -84,32 +84,75 @@ export class PadView {
   }
 
   private bindPointer(): void {
+    // Touches are handled via native touch events below: iOS Safari aligns
+    // pointer events to rAF and can drop near-simultaneous pointerdowns,
+    // while touch events batch every new contact in changedTouches. Pointer
+    // events here serve mouse and pen only.
     const pos = (e: PointerEvent): [number, number] => {
       const r = this.canvas.getBoundingClientRect()
       return [e.clientX - r.left, e.clientY - r.top]
     }
     this.canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch') return
       e.preventDefault()
       this.canvas.setPointerCapture(e.pointerId)
       const [x, y] = pos(e)
       this.tracker.down(e.pointerId, x, y)
-      if (this.store.state.appearance.ripples) {
-        this.ripples.push({ x, y, start: performance.now() })
-        this.requestRender()
-      }
+      this.ripple(x, y)
     })
     this.canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch') return
       if (!e.buttons && e.pointerType === 'mouse') return
       const [x, y] = pos(e)
       this.tracker.move(e.pointerId, x, y)
     })
     const end = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return
       e.preventDefault()
       this.tracker.up(e.pointerId)
     }
     this.canvas.addEventListener('pointerup', end)
     this.canvas.addEventListener('pointercancel', end)
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+
+    // preventDefault on touchstart also tells Safari the page owns these
+    // touches, suppressing its own gesture recognition where possible.
+    const rect = () => this.canvas.getBoundingClientRect()
+    this.canvas.addEventListener(
+      'touchstart',
+      (e) => {
+        e.preventDefault()
+        for (const t of touchesToPad(e.changedTouches, rect())) {
+          this.tracker.down(t.id, t.x, t.y)
+          this.ripple(t.x, t.y)
+        }
+      },
+      { passive: false },
+    )
+    this.canvas.addEventListener(
+      'touchmove',
+      (e) => {
+        e.preventDefault()
+        for (const t of touchesToPad(e.changedTouches, rect())) {
+          this.tracker.move(t.id, t.x, t.y)
+        }
+      },
+      { passive: false },
+    )
+    const touchEnd = (e: TouchEvent) => {
+      e.preventDefault()
+      for (const t of touchesToPad(e.changedTouches, rect())) {
+        this.tracker.up(t.id)
+      }
+    }
+    this.canvas.addEventListener('touchend', touchEnd, { passive: false })
+    this.canvas.addEventListener('touchcancel', touchEnd, { passive: false })
+  }
+
+  private ripple(x: number, y: number): void {
+    if (!this.store.state.appearance.ripples) return
+    this.ripples.push({ x, y, start: performance.now() })
+    this.requestRender()
   }
 
   requestRender(): void {

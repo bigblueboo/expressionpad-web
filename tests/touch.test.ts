@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { buildLayout, type Layout } from '../src/core/layout'
 import { SCALES } from '../src/core/scales'
-import { TouchTracker, velocityFromKey } from '../src/ui/touch'
+import { TouchTracker, touchesToPad, velocityFromKey } from '../src/ui/touch'
 import type { PadConfig } from '../src/core/state'
 import type { VoiceSink } from '../src/audio/sink'
 
@@ -156,5 +156,32 @@ describe('TouchTracker', () => {
     const key = layout.keys[0]
     expect(velocityFromKey(key, key.y + key.h)).toBeCloseTo(1)
     expect(velocityFromKey(key, key.y)).toBeCloseTo(0.25)
+  })
+
+  it('touchesToPad converts a whole changedTouches batch to local coords', () => {
+    // Rapidly alternating touches arrive batched — every one must survive.
+    const batch = [
+      { identifier: 101, clientX: 60, clientY: 400 },
+      { identifier: 102, clientX: 160, clientY: 410 },
+      { identifier: 103, clientX: 260, clientY: 420 },
+    ]
+    const pts = touchesToPad(batch, { left: 10, top: 20 })
+    expect(pts).toEqual([
+      { id: 101, x: 50, y: 380 },
+      { id: 102, x: 150, y: 390 },
+      { id: 103, x: 250, y: 400 },
+    ])
+  })
+
+  it('a batched multi-touch start produces one voice per contact', () => {
+    const batch = [
+      { identifier: 7, clientX: 50, clientY: 390 },
+      { identifier: 8, clientX: 250, clientY: 390 },
+    ]
+    for (const t of touchesToPad(batch, { left: 0, top: 0 })) {
+      tracker.down(t.id, t.x, t.y)
+    }
+    expect(sink.ofType('on')).toHaveLength(2)
+    expect(tracker.active.size).toBe(2)
   })
 })

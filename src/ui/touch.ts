@@ -110,6 +110,25 @@ export class TouchTracker {
   }
 }
 
+export interface TouchPoint {
+  identifier: number
+  clientX: number
+  clientY: number
+}
+
+/** Map a TouchList-like batch to pad-local coordinates. */
+export function touchesToPad(
+  list: ArrayLike<TouchPoint>,
+  rect: { left: number; top: number },
+): Array<{ id: number; x: number; y: number }> {
+  const out: Array<{ id: number; x: number; y: number }> = []
+  for (let i = 0; i < list.length; i++) {
+    const t = list[i]
+    out.push({ id: t.identifier, x: t.clientX - rect.left, y: t.clientY - rect.top })
+  }
+  return out
+}
+
 /** Velocity from vertical position within the key: bottom = loud, top = soft. */
 export function velocityFromKey(key: KeyShape, y: number): number {
   const local = (y - key.y) / key.h
