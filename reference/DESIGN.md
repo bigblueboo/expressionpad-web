@@ -46,8 +46,13 @@ app (mode of expression, LLC; released 2017-09-12, last update 1.3.1,
 
 ## Deliberate deviations in the web recreation
 
-- SMPLR (sampler) tab dropped for now — synth + MIDI cover the core use
-  case; a sample-based voice could be added later.
+- SMPLR tab: the original's sampled-instrument library is replaced by
+  instruments synthesized to PCM at load time (English Horn, Choir,
+  Strings, E-Piano, Marimba, Pluck) plus a user-loadable sample slot —
+  no audio assets to ship. RETRIG restarts the sample on semitone
+  crossings during slides; PANIC silences everything. The original's
+  "only the SYNTH or SAMPLER can be active at a time" rule is the VOICE
+  switch, present on both tabs.
 - SYSTEM latency/CPU readouts replaced by the AudioContext latency shown in
   the MIDI tab status line.
 - MIDI session/IP (CoreMIDI network) replaced by Web MIDI device pickers.

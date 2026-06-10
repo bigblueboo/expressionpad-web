@@ -35,8 +35,13 @@ available — the internal synth still works.
   aftertouch control, LFO (pitch/filter). Original presets recreated:
   Super Sine, Growl Dark, Square Tap, Pole Position, Synolin, Saw Demise,
   Room Drill.
+- **Sampler**: six built-in instruments rendered from pure math at load
+  time (English Horn, Choir, Strings, E-Piano, Marimba, Pluck — with
+  click-free loop points) plus user sample loading. RETRIG gives harp-gliss
+  slides; PANIC kills everything. Synth and sampler swap via the VOICE
+  switch, like the original.
 - **FX**: reverb (generated impulse), delay, distortion, fatten (detuned
-  unison) — the original's four inserts.
+  unison) — the original's four inserts, shared by synth and sampler.
 - **MIDI**: MPE-style output (per-touch channel, per-note pitch bend,
   channel pressure, CC74 timbre), configurable bend range, MIDI input to
   play the internal synth.
@@ -54,6 +59,6 @@ src/core    notes, scales, layout geometry, state store, presets
 src/audio   pure DSP math, synth engine, voice routing
 src/midi    Web MIDI out (MPE) + in
 src/ui      canvas pad, touch tracking, widgets, control panel, color schemes
-tests       vitest suite (112 tests)
+tests       vitest suite (134 tests)
 reference   screenshots of the original app + rendered checks of this build
 ```

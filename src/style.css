@@ -281,6 +281,25 @@ body {
   color: var(--text);
 }
 
+.action-btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1.5px solid var(--accent-dim);
+  background: #0c1722;
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.action-btn:active {
+  background: var(--accent-dim);
+  box-shadow: var(--glow);
+}
+
 .midi-status {
   font-size: 10px;
   color: var(--text-dim);

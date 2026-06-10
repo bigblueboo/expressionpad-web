@@ -67,14 +67,28 @@ export interface AppearanceConfig {
   ripples: boolean
 }
 
+export interface SamplerConfig {
+  preset: string
+  level: number
+  attack: number
+  release: number
+  /** Restart the sample when a slide crosses into a new semitone. */
+  retrig: boolean
+  /** Root note assumed for a user-loaded sample. */
+  userRoot: number
+}
+
 export interface UiConfig {
   panelOpen: boolean
-  tab: 'synth' | 'fx' | 'pad' | 'midi'
+  tab: 'synth' | 'smplr' | 'fx' | 'pad' | 'midi'
 }
 
 export interface AppState {
+  /** Which local sound source touches play — synth or sampler. */
+  voice: 'synth' | 'sampler'
   pad: PadConfig
   synth: SynthConfig
+  sampler: SamplerConfig
   fx: FxConfig
   midi: MidiConfig
   appearance: AppearanceConfig
@@ -83,6 +97,11 @@ export interface AppState {
 
 export function defaultState(): AppState {
   return {
+    voice: 'synth',
+    sampler: {
+      preset: 'E-Piano', level: 0.8, attack: 0.005, release: 0.35,
+      retrig: false, userRoot: 60,
+    },
     pad: {
       layout: 'square', rows: 4, cols: 12,
       rowTuning: 'Fourths [+5]', colScale: 'Chromatic', baseNote: 48,

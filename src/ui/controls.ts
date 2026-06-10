@@ -7,12 +7,16 @@ import { PRESET_NAMES, presetPatch } from '../core/presets'
 import { ROW_TUNING_NAMES, SCALE_NAMES } from '../core/scales'
 import { noteName } from '../core/notes'
 import { SCHEME_NAMES } from './colors'
-import { group, knob, select, stepper, toggle } from './widgets'
+import { SAMPLE_NAMES, USER_PRESET } from '../audio/samplegen'
+import { button, group, knob, select, stepper, toggle } from './widgets'
 import type { SynthEngine } from '../audio/engine'
+import type { SamplerEngine } from '../audio/sampler'
 import type { MidiOut } from '../midi/midi'
+import type { VoiceSink } from '../audio/sink'
 
 const TABS = [
   { id: 'synth', label: 'SYNTH' },
+  { id: 'smplr', label: 'SMPLR' },
   { id: 'fx', label: 'FX' },
   { id: 'pad', label: 'PAD' },
   { id: 'midi', label: 'MIDI' },
@@ -21,7 +25,9 @@ const TABS = [
 export function buildControls(
   store: Store,
   engine: SynthEngine,
+  sampler: SamplerEngine,
   midi: MidiOut,
+  router: VoiceSink,
   root: HTMLElement,
 ): void {
   const bar = document.createElement('header')
@@ -69,6 +75,7 @@ export function buildControls(
 
   const pages: Record<string, HTMLElement> = {
     synth: synthPage(store),
+    smplr: smplrPage(store, sampler, router),
     fx: fxPage(store),
     pad: padPage(store),
     midi: midiPage(store, midi, engine),
@@ -106,6 +113,77 @@ function row(...children: HTMLElement[]): HTMLElement {
 
 const semiFmt = (v: number) => (v > 0 ? `+${v}` : String(v))
 
+/** SYNTH/SMPLR exclusivity switch — only one local sound source at a time. */
+function voiceGroup(store: Store): HTMLElement {
+  return group(
+    'VOICE',
+    select(store, 'voice', 'active', [
+      { value: 'synth', text: 'Synth' },
+      { value: 'sampler', text: 'Sampler' },
+    ]),
+  )
+}
+
+function smplrPage(store: Store, sampler: SamplerEngine, router: VoiceSink): HTMLElement {
+  const presetSel = select(
+    store, 'sampler.preset', 'preset',
+    [...SAMPLE_NAMES, USER_PRESET].map((p) => ({ value: p, text: p })),
+  )
+
+  const status = document.createElement('div')
+  status.className = 'midi-status widget'
+  const syncStatus = () => {
+    if (store.state.sampler.preset === USER_PRESET) {
+      status.textContent = sampler.userSampleName
+        ? `Loaded: ${sampler.userSampleName}`
+        : 'No sample loaded yet.'
+    } else {
+      status.textContent = 'Built-in instrument.'
+    }
+  }
+  syncStatus()
+  store.subscribe((_s, p) => {
+    if (p.startsWith('sampler')) syncStatus()
+  })
+
+  const file = document.createElement('input')
+  file.type = 'file'
+  file.accept = 'audio/*'
+  file.style.display = 'none'
+  file.addEventListener('change', async () => {
+    const f = file.files?.[0]
+    if (!f) return
+    try {
+      await sampler.decodeFile(f)
+      store.set('sampler.preset', USER_PRESET)
+      syncStatus()
+    } catch {
+      status.textContent = `Could not decode ${f.name}.`
+    }
+  })
+
+  const loadBtn = button('load', () => file.click())
+  loadBtn.appendChild(file)
+
+  return row(
+    group('SAMPLER', presetSel, loadBtn, toggle(store, 'sampler.retrig', 'retrig'),
+      button('panic', () => router.allOff()), status),
+    group(
+      'LEVEL',
+      knob(store, 'sampler.level', 'level'),
+      knob(store, 'sampler.attack', 'attack', { min: 0.002, max: 0.5, fmt: secFmt }),
+      knob(store, 'sampler.release', 'release', { min: 0.02, max: 3, fmt: secFmt }),
+    ),
+    group(
+      'USER ROOT',
+      stepper(store, 'sampler.userRoot', 'root', {
+        min: 24, max: 96, fmt: (v) => noteName(v, true),
+      }),
+    ),
+    voiceGroup(store),
+  )
+}
+
 function synthPage(store: Store): HTMLElement {
   const presetSel = select(
     store, 'synth.preset', 'preset',
@@ -118,6 +196,7 @@ function synthPage(store: Store): HTMLElement {
 
   return row(
     group('PRESET', presetSel, knob(store, 'synth.level', 'level')),
+    voiceGroup(store),
     group(
       'GENERATOR 1',
       knob(store, 'synth.gen1.morph', 'wave'),

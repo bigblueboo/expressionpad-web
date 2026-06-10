@@ -157,6 +157,16 @@ export function stepper(
   return labeled(label, wrap)
 }
 
+/** A momentary action button (e.g. PANIC). */
+export function button(label: string, onClick: () => void): HTMLElement {
+  const btn = el('button', 'action-btn')
+  btn.type = 'button'
+  btn.textContent = label
+  btn.setAttribute('aria-label', label)
+  btn.addEventListener('click', onClick)
+  return labeled(label, btn)
+}
+
 /** A titled group box, like the original's PADMATRIX / REVERB frames. */
 export function group(title: string, ...children: HTMLElement[]): HTMLElement {
   const g = el('div', 'group')

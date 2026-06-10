@@ -2,20 +2,24 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Store } from '../src/core/state'
 import { SynthEngine } from '../src/audio/engine'
+import { SamplerEngine } from '../src/audio/sampler'
 import { MidiOut } from '../src/midi/midi'
 import { buildControls } from '../src/ui/controls'
 import { knob, stepper, toggle } from '../src/ui/widgets'
 import { Router } from '../src/audio/sink'
 import type { VoiceSink } from '../src/audio/sink'
+import { MockAudioContext } from './mock-audio'
 
 function setup() {
   document.body.innerHTML = '<div id="app"></div>'
   const root = document.getElementById('app')!
   const store = new Store()
-  const engine = new SynthEngine(store)
+  const engine = new SynthEngine(store, () => new MockAudioContext() as unknown as AudioContext)
+  const sampler = new SamplerEngine(store, engine)
   const midi = new MidiOut(store)
-  buildControls(store, engine, midi, root)
-  return { root, store }
+  const router = new Router()
+  buildControls(store, engine, sampler, midi, router, root)
+  return { root, store, router }
 }
 
 describe('control panel', () => {
@@ -23,10 +27,10 @@ describe('control panel', () => {
     document.body.innerHTML = ''
   })
 
-  it('renders the four tabs and brand', () => {
+  it('renders the five tabs and brand', () => {
     const { root } = setup()
     const tabs = [...root.querySelectorAll('.tab')].map((t) => t.textContent)
-    expect(tabs).toEqual(['SYNTH', 'FX', 'PAD', 'MIDI'])
+    expect(tabs).toEqual(['SYNTH', 'SMPLR', 'FX', 'PAD', 'MIDI'])
     expect(root.querySelector('.brand')?.textContent).toBe('expressionPad')
   })
 
@@ -74,7 +78,7 @@ describe('control panel', () => {
 
   it('exposes the original control groups', () => {
     const { root, store } = setup()
-    const titlesOn = (tab: 'synth' | 'fx' | 'pad' | 'midi') => {
+    const titlesOn = (tab: 'synth' | 'smplr' | 'fx' | 'pad' | 'midi') => {
       store.patch({ 'ui.tab': tab, 'ui.panelOpen': true })
       return [...root.querySelectorAll(`[data-page="${tab}"] .group-title`)]
         .map((t) => t.textContent)
@@ -86,11 +90,55 @@ describe('control panel', () => {
       expect.arrayContaining(['REVERB', 'DELAY', 'DISTORT', 'FATTEN']),
     )
     expect(titlesOn('synth')).toEqual(
-      expect.arrayContaining(['PRESET', 'GENERATOR 1', 'GENERATOR 2', 'ENVELOPE', 'FILTER', 'LFO']),
+      expect.arrayContaining(['PRESET', 'VOICE', 'GENERATOR 1', 'GENERATOR 2', 'ENVELOPE', 'FILTER', 'LFO']),
+    )
+    expect(titlesOn('smplr')).toEqual(
+      expect.arrayContaining(['SAMPLER', 'LEVEL', 'USER ROOT', 'VOICE']),
     )
     expect(titlesOn('midi')).toEqual(
       expect.arrayContaining(['MIDI OUT', 'MIDI IN', 'SYSTEM']),
     )
+  })
+
+  it('sampler preset menu lists built-ins plus the user slot', () => {
+    const { root } = setup()
+    const sel = root.querySelector<HTMLSelectElement>(
+      '[data-page="smplr"] select[aria-label="preset"]',
+    )!
+    const values = [...sel.options].map((o) => o.value)
+    expect(values).toContain('English Horn')
+    expect(values).toContain('E-Piano')
+    expect(values[values.length - 1]).toBe('User Sample')
+  })
+
+  it('voice select switches between synth and sampler from either page', () => {
+    const { root, store } = setup()
+    expect(store.state.voice).toBe('synth')
+    const smplrVoice = root.querySelector<HTMLSelectElement>(
+      '[data-page="smplr"] select[aria-label="active"]',
+    )!
+    smplrVoice.value = 'sampler'
+    smplrVoice.dispatchEvent(new Event('change'))
+    expect(store.state.voice).toBe('sampler')
+    // The synth page's copy of the control stays in sync.
+    const synthVoice = root.querySelector<HTMLSelectElement>(
+      '[data-page="synth"] select[aria-label="active"]',
+    )!
+    expect(synthVoice.value).toBe('sampler')
+  })
+
+  it('panic silences the router', () => {
+    const { root, router } = setup()
+    let silenced = false
+    const spy: VoiceSink = {
+      noteOn() {}, glide() {}, pressure() {},
+      noteOff() {}, allOff: () => (silenced = true),
+    }
+    router.add(spy, () => true)
+    root.querySelector<HTMLButtonElement>(
+      '[data-page="smplr"] button[aria-label="panic"]',
+    )!.click()
+    expect(silenced).toBe(true)
   })
 
   it('layout select offers hexagons, squares, and piano', () => {

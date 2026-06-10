@@ -72,6 +72,11 @@ export class SynthEngine implements VoiceSink {
     this.applyParams('fx')
   }
 
+  /** Entry point of the shared FX chain, for sibling voices (sampler). */
+  get fxInput(): GainNode {
+    return this.voiceBus
+  }
+
   get latencyMs(): number {
     if (!this.ctx) return 0
     return Math.round((this.ctx.baseLatency ?? 0) * 1000 + (128 / this.ctx.sampleRate) * 1000)
