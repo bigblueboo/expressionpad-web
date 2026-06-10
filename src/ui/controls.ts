@@ -275,6 +275,8 @@ function padPage(store: Store): HTMLElement {
         { value: 'square', text: 'Square' },
         { value: 'hex', text: 'Hexagon' },
         { value: 'piano', text: 'Piano' },
+        { value: 'kbd-chromatic', text: 'Keys (Chromatic)' },
+        { value: 'kbd-piano', text: 'Keys (Piano)' },
       ]),
       select(store, 'pad.rowTuning', 'row tuning', ROW_TUNING_NAMES),
       stepper(store, 'pad.cols', 'cols', { min: 4, max: 24 }),

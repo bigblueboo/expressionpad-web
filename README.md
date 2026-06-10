@@ -28,6 +28,11 @@ available — the internal synth still works.
 - **Layouts**: square grid, hexagon grid, stacked piano — any rows × cols,
   portrait or landscape. Row tunings (fourths, fifths, guitar EADGBE,
   Open C…), column scales (chromatic, modes, pentatonics…), any base note.
+- **Typing-keyboard layouts**: for desktop users, two layouts mapped to the
+  physical keyboard. Keys (Chromatic) walks each QWERTY row chromatically
+  (z x c v → C C# D Eb) with the row tuning between rows; Keys (Piano)
+  makes z–/ and q–p white keys with the rows above as black keys (z x c →
+  C D E, s d → C# Eb). Keycaps render on the pad and respond to mouse too.
 - **Slide / frets**: slide knob morphs from discrete retriggering to fully
   continuous pitch; frets snaps slides to semitones.
 - **Additive synth**: two morphing additive generators (sine→tri→saw→square
@@ -45,7 +50,7 @@ available — the internal synth still works.
 - **MIDI**: MPE-style output (per-touch channel, per-note pitch bend,
   channel pressure, CC74 timbre), configurable bend range, MIDI input to
   play the internal synth.
-- **Collapsible controls**: tab bar (SYNTH | FX | PAD | MIDI) with a chevron
+- **Collapsible controls**: tab bar (SYNTH | SMPLR | FX | PAD | MIDI) with a chevron
   to collapse everything and play full-screen. Tap the active tab to toggle.
 - **URL config**: share setups, e.g. `?layout=hex&scheme=Rainbow&rows=6&cols=14`.
 

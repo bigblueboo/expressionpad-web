@@ -49,16 +49,22 @@ export class PadView {
     this.resize()
   }
 
+  get currentLayout(): Layout {
+    return this.layout
+  }
+
   private computeLayout(width: number, height: number): Layout {
     const pad = this.store.state.pad
+    // Keyboard layouts have a fixed physical row count regardless of config.
+    const rows = pad.layout.startsWith('kbd') ? 4 : pad.rows
     return buildLayout({
       kind: pad.layout,
-      rows: pad.rows,
+      rows,
       cols: pad.cols,
       width,
       height,
       baseNote: pad.baseNote,
-      rowOffsets: rowOffsets(pad.rowTuning, pad.rows),
+      rowOffsets: rowOffsets(pad.rowTuning, rows),
       scale: SCALES[pad.colScale] ?? SCALES.Chromatic,
     })
   }
@@ -186,13 +192,23 @@ export class PadView {
       const colors = keyColors(app.scheme, key, opts)
       const active = activeKeyIds.has(key.id)
       this.drawKey(ctx, key, colors.fill, colors.stroke, active, activeKeyIds.get(key.id) ?? 0)
-      if (app.labels && key.kind !== 'black') {
+      if (app.labels && (key.kind !== 'black' || key.char)) {
         ctx.fillStyle = active ? '#10141c' : colors.label
         ctx.font = `${Math.max(9, Math.min(16, key.w * 0.22))}px 'Avenir Next Condensed', 'Arial Narrow', sans-serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        const labelY = key.kind === 'white' ? key.y + key.h * 0.78 : key.cy
+        const labelY = key.kind === 'white' && !key.char ? key.y + key.h * 0.78 : key.cy
         ctx.fillText(noteName(key.note), key.cx, labelY)
+      }
+      if (app.labels && key.char) {
+        ctx.save()
+        ctx.globalAlpha = 0.55
+        ctx.fillStyle = active ? '#10141c' : colors.label
+        ctx.font = `${Math.max(8, key.w * 0.16)}px 'Avenir Next Condensed', 'Arial Narrow', sans-serif`
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'top'
+        ctx.fillText(key.char, key.x + key.w * 0.12, key.y + key.h * 0.1)
+        ctx.restore()
       }
     }
 
@@ -224,7 +240,7 @@ export class PadView {
       ctx.fill()
       ctx.stroke()
     } else {
-      const inset = key.kind === 'black' ? 1 : 1.5
+      const inset = key.inset ?? (key.kind === 'black' ? 1 : 1.5)
       const r = Math.min(6, key.w * 0.08)
       roundRect(ctx, key.x + inset, key.y + inset, key.w - inset * 2, key.h - inset * 2, r)
       ctx.fill()

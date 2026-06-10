@@ -6,6 +6,7 @@ import { Router } from './audio/sink'
 import type { VoiceSink } from './audio/sink'
 import { MidiIn, MidiOut } from './midi/midi'
 import { PadView } from './ui/pad'
+import { KeyboardInput } from './ui/keyboard'
 import { buildControls } from './ui/controls'
 
 const app = document.getElementById('app')!
@@ -45,7 +46,11 @@ const padContainer = document.createElement('main')
 padContainer.className = 'pad-container'
 app.appendChild(padContainer)
 
-new PadView(store, router, padContainer)
+const pad = new PadView(store, router, padContainer)
+
+// Typing-keyboard input drives the kbd-* layouts.
+const keyboard = new KeyboardInput(() => pad.currentLayout, pad.tracker)
+keyboard.attach(window)
 
 // MIDI in drives whichever local voice is active (never MIDI out — no echo).
 const localVoice: VoiceSink = {

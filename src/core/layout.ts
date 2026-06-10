@@ -8,7 +8,7 @@
 import { degreeToSemitones } from './scales'
 import { pitchClass } from './notes'
 
-export type LayoutKind = 'square' | 'hex' | 'piano'
+export type LayoutKind = 'square' | 'hex' | 'piano' | 'kbd-chromatic' | 'kbd-piano'
 
 export interface KeyShape {
   id: number
@@ -27,6 +27,12 @@ export interface KeyShape {
   cy: number
   /** Polygon outline for hexes. */
   poly?: Array<[number, number]>
+  /** KeyboardEvent.code that triggers this key (keyboard layouts). */
+  code?: string
+  /** Printed keycap character, shown as a corner label. */
+  char?: string
+  /** Visual inset override for the renderer. */
+  inset?: number
 }
 
 export interface LayoutParams {
@@ -261,10 +267,138 @@ function buildPiano(p: LayoutParams): Layout {
   }
 }
 
+// -------------------------------------------------------- typing keyboard ---
+
+interface KbdRow {
+  codes: string[]
+  chars: string
+  /** Horizontal stagger in key units, relative to the digit row. */
+  stagger: number
+}
+
+/** Physical rows bottom-to-top, so index matches pad row 0 = lowest pitch. */
+export const KBD_ROWS: KbdRow[] = [
+  {
+    codes: ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN', 'KeyM', 'Comma', 'Period', 'Slash'],
+    chars: 'zxcvbnm,./', stagger: 1.25,
+  },
+  {
+    codes: ['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyH', 'KeyJ', 'KeyK', 'KeyL', 'Semicolon', 'Quote'],
+    chars: "asdfghjkl;'", stagger: 0.75,
+  },
+  {
+    codes: ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyY', 'KeyU', 'KeyI', 'KeyO', 'KeyP', 'BracketLeft', 'BracketRight'],
+    chars: 'qwertyuiop[]', stagger: 0.5,
+  },
+  {
+    codes: ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'],
+    chars: '1234567890-=', stagger: 0,
+  },
+]
+
+interface KbdGeom {
+  u: number
+  cell(physRow: number, col: number): { x: number; y: number }
+}
+
+function kbdGeometry(p: LayoutParams): KbdGeom {
+  const widest = Math.max(...KBD_ROWS.map((r) => r.stagger + r.codes.length))
+  const u = Math.min(p.width / widest, p.height / KBD_ROWS.length)
+  const ox = (p.width - widest * u) / 2
+  const oy = (p.height - KBD_ROWS.length * u) / 2
+  return {
+    u,
+    cell(physRow, col) {
+      return {
+        x: ox + (KBD_ROWS[physRow].stagger + col) * u,
+        y: oy + (KBD_ROWS.length - 1 - physRow) * u,
+      }
+    },
+  }
+}
+
+function kbdHitAndPitch(keys: KeyShape[]): Pick<Layout, 'hitTest' | 'pitchAt'> {
+  return {
+    hitTest(x, y) {
+      // Blacks (piano variant) are pushed after whites per pair; scan all,
+      // last match wins so blacks take precedence within overlapping rows.
+      let hit: KeyShape | null = null
+      for (const k of keys) {
+        if (x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h) hit = k
+      }
+      return hit
+    },
+    pitchAt(x, row) {
+      const rowKeys = keys.filter((k) => k.row === row && k.kind !== 'black')
+      const centersX = rowKeys.map((k) => k.cx)
+      const notes = rowKeys.map((k) => k.note)
+      return interpPitch(centersX, notes, x)
+    },
+  }
+}
+
+function buildKbdChromatic(p: LayoutParams): Layout {
+  const geom = kbdGeometry(p)
+  const keys: KeyShape[] = []
+  let id = 0
+  for (let row = 0; row < KBD_ROWS.length; row++) {
+    const krow = KBD_ROWS[row]
+    for (let col = 0; col < krow.codes.length; col++) {
+      const { x, y } = geom.cell(row, col)
+      keys.push({
+        id: id++, note: noteFor(p, row, col), row, col, kind: 'rect',
+        x, y, w: geom.u, h: geom.u, cx: x + geom.u / 2, cy: y + geom.u / 2,
+        code: krow.codes[col], char: krow.chars[col], inset: geom.u * 0.05,
+      })
+    }
+  }
+  return { params: p, keys, rowHeight: geom.u, ...kbdHitAndPitch(keys) }
+}
+
+function buildKbdPiano(p: LayoutParams): Layout {
+  const geom = kbdGeometry(p)
+  const keys: KeyShape[] = []
+  let id = 0
+  // Two white/black row pairs: z-row + home-row blacks, q-row + digit blacks.
+  const pairs = [
+    { white: 0, black: 1 },
+    { white: 2, black: 3 },
+  ]
+  pairs.forEach(({ white, black }, pair) => {
+    const whiteRow = KBD_ROWS[white]
+    const blackRow = KBD_ROWS[black]
+    const count = 10 // letter keys only; brackets/quote stay silent
+    const whites = whiteNotesFrom(p.baseNote + (p.rowOffsets[pair] ?? 0), count)
+    for (let col = 0; col < count; col++) {
+      const { x, y } = geom.cell(white, col)
+      keys.push({
+        id: id++, note: whites[col], row: pair, col, kind: 'white',
+        x, y, w: geom.u, h: geom.u, cx: x + geom.u / 2, cy: y + geom.u / 2,
+        code: whiteRow.codes[col], char: whiteRow.chars[col], inset: geom.u * 0.05,
+      })
+    }
+    for (let col = 0; col < count - 1; col++) {
+      if (whites[col + 1] - whites[col] !== 2) continue
+      // The key physically above-right of white `col` sits at black index col+1.
+      const idx = col + 1
+      if (idx >= blackRow.codes.length) continue
+      const { x, y } = geom.cell(black, idx)
+      keys.push({
+        id: id++, note: whites[col] + 1, row: pair, col: idx, kind: 'black',
+        x, y, w: geom.u, h: geom.u, cx: x + geom.u / 2, cy: y + geom.u / 2,
+        code: blackRow.codes[idx], char: blackRow.chars[idx], inset: geom.u * 0.05,
+      })
+    }
+  })
+  return { params: p, keys, rowHeight: geom.u, ...kbdHitAndPitch(keys) }
+}
+
 export function buildLayout(p: LayoutParams): Layout {
   switch (p.kind) {
     case 'hex': return buildHex(p)
     case 'piano': return buildPiano(p)
+    case 'kbd-chromatic': return buildKbdChromatic(p)
+    case 'kbd-piano': return buildKbdPiano(p)
     default: return buildSquare(p)
   }
 }

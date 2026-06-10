@@ -141,13 +141,13 @@ describe('control panel', () => {
     expect(silenced).toBe(true)
   })
 
-  it('layout select offers hexagons, squares, and piano', () => {
+  it('layout select offers hexagons, squares, piano, and keyboard layouts', () => {
     const { root } = setup()
     const sel = root.querySelector<HTMLSelectElement>(
       '[data-page="pad"] select[aria-label="layout"]',
     )!
     const values = [...sel.options].map((o) => o.value)
-    expect(values).toEqual(['square', 'hex', 'piano'])
+    expect(values).toEqual(['square', 'hex', 'piano', 'kbd-chromatic', 'kbd-piano'])
   })
 
   it('selecting a preset applies the whole patch', () => {
