@@ -57,6 +57,24 @@ describe('key colors', () => {
     expect(bright.l).toBeGreaterThan(dim.l)
   })
 
+  it('conventional black-key pitch classes are darker on grid keys', () => {
+    for (const scheme of SCHEME_NAMES) {
+      for (const kind of ['rect', 'hex'] as const) {
+        // C# (49) vs its natural neighbors C (48) and D (50).
+        const accidental = parseHsl(keyColors(scheme, key(49, kind), opts).fill)!
+        const naturalC = parseHsl(keyColors(scheme, key(48, kind), opts).fill)!
+        const naturalD = parseHsl(keyColors(scheme, key(50, kind), opts).fill)!
+        expect(accidental.l, `${scheme} ${kind}`).toBeLessThan(naturalC.l)
+        expect(accidental.l, `${scheme} ${kind}`).toBeLessThan(naturalD.l)
+      }
+    }
+  })
+
+  it('accidental darkening leaves piano whites and blacks alone', () => {
+    const white = parseHsl(keyColors('Ocean', key(61, 'white'), opts).fill)!
+    expect(white.l).toBeGreaterThan(55) // C# as a white kind stays bright
+  })
+
   it('octaves share a color (pitch-class based)', () => {
     const a = keyColors('Rainbow', key(50), opts)
     const b = keyColors('Rainbow', key(62), opts)

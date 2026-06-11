@@ -44,6 +44,19 @@ describe('TouchTracker', () => {
     tracker = new TouchTracker(() => layout, () => pad, sink)
   })
 
+  it('fires onTrigger at event time for downs and drag retriggers', () => {
+    const triggered: number[] = []
+    tracker = new TouchTracker(
+      () => layout, () => pad, sink, () => {}, (key) => triggered.push(key.note),
+    )
+    tracker.down(1, 50, 390) // C3
+    tracker.up(1) // sub-frame tap: trigger already recorded
+    expect(triggered).toEqual([48])
+    tracker.down(2, 50, 390)
+    tracker.move(2, 150, 390) // slide=0 → retrigger on the next key
+    expect(triggered).toEqual([48, 48, 49])
+  })
+
   it('starts a voice on touch down at the key pitch', () => {
     tracker.down(1, 50, 390) // bottom-left key, C3 = 48
     expect(sink.calls).toEqual([['on', 1, 48, 0.8]])

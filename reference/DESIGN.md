@@ -57,3 +57,8 @@ app (mode of expression, LLC; released 2017-09-12, last update 1.3.1,
   the MIDI tab status line.
 - MIDI session/IP (CoreMIDI network) replaced by Web MIDI device pickers.
 - Added URL-parameter config for sharable setups.
+- Grid/hex keys with conventional black-key pitch classes (C# Eb F# Ab Bb)
+  are darkened like piano blacks so the natural lattice reads at a glance.
+- Ripples are a brightness wave propagating key-to-key through the lattice
+  (damped wave + viscosity, shallow-water style) rather than a drawn circle —
+  every note onset drops a "pebble" and the glow spreads to neighbor keys.

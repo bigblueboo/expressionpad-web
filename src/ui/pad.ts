@@ -1,27 +1,24 @@
 /**
  * PadView — renders the playing surface to a canvas and feeds pointer
- * events to a TouchTracker. Touched keys glow white; optional ripples.
+ * events to a TouchTracker. Touched keys glow white; each new touch pokes
+ * a BrightnessField whose fluid-like wave spreads across neighboring keys.
  */
 import { buildLayout, type Layout, type KeyShape } from '../core/layout'
 import { rowOffsets, SCALES } from '../core/scales'
 import { noteName } from '../core/notes'
 import type { Store } from '../core/state'
 import { TouchTracker, touchesToPad } from './touch'
-import { keyColors } from './colors'
+import { keyColors, parseHsl } from './colors'
+import { BrightnessField } from './field'
 import type { VoiceSink } from '../audio/sink'
-
-interface Ripple {
-  x: number
-  y: number
-  start: number
-}
 
 export class PadView {
   readonly canvas: HTMLCanvasElement
   readonly tracker: TouchTracker
   private ctx2d: CanvasRenderingContext2D | null
   private layout: Layout
-  private ripples: Ripple[] = []
+  private field: BrightnessField
+  private lastFrame = performance.now()
   private raf = 0
   private dpr = 1
 
@@ -32,11 +29,17 @@ export class PadView {
     container.appendChild(this.canvas)
     this.ctx2d = this.canvas.getContext('2d')
     this.layout = this.computeLayout(1, 1)
+    this.field = new BrightnessField(this.layout.keys)
     this.tracker = new TouchTracker(
       () => this.layout,
       () => store.state.pad,
       sink,
       () => this.requestRender(),
+      // Every note onset drops a "pebble" whose wave spreads across the
+      // lattice — at event time, so even sub-frame taps make a splash.
+      (key) => {
+        if (store.state.appearance.ripples) this.field.poke(key.id, 1.3)
+      },
     )
     this.bindPointer()
     store.subscribe((_s, path) => {
@@ -75,6 +78,7 @@ export class PadView {
       this.canvas.width / this.dpr,
       this.canvas.height / this.dpr,
     )
+    this.field = new BrightnessField(this.layout.keys)
   }
 
   resize(): void {
@@ -104,7 +108,6 @@ export class PadView {
       this.canvas.setPointerCapture(e.pointerId)
       const [x, y] = pos(e)
       this.tracker.down(e.pointerId, x, y)
-      this.ripple(x, y)
     })
     this.canvas.addEventListener('pointermove', (e) => {
       if (e.pointerType === 'touch') return
@@ -130,7 +133,6 @@ export class PadView {
         e.preventDefault()
         for (const t of touchesToPad(e.changedTouches, rect())) {
           this.tracker.down(t.id, t.x, t.y)
-          this.ripple(t.x, t.y)
         }
       },
       { passive: false },
@@ -155,19 +157,13 @@ export class PadView {
     this.canvas.addEventListener('touchcancel', touchEnd, { passive: false })
   }
 
-  private ripple(x: number, y: number): void {
-    if (!this.store.state.appearance.ripples) return
-    this.ripples.push({ x, y, start: performance.now() })
-    this.requestRender()
-  }
-
   requestRender(): void {
     if (this.raf) return
     this.raf = requestAnimationFrame(() => {
       this.raf = 0
       this.render()
-      // Keep animating while touches or ripples are live.
-      if (this.tracker.active.size > 0 || this.ripples.length > 0) this.requestRender()
+      // Keep animating while touches are live or the field is still moving.
+      if (this.tracker.active.size > 0 || this.field.energy > 0.002) this.requestRender()
     })
   }
 
@@ -186,12 +182,31 @@ export class PadView {
       activeKeyIds.set(t.key.id, Math.max(activeKeyIds.get(t.key.id) ?? 0, t.pressure))
     }
 
+    // Advance the brightness field by wall-clock time (pokes happen at
+    // event time in the tracker's onTrigger hook).
+    const now = performance.now()
+    const dt = Math.min(0.08, Math.max(0, (now - this.lastFrame) / 1000))
+    this.lastFrame = now
+    this.field.step(dt)
+
     const opts = { brightness: app.brightness, baseNote: this.store.state.pad.baseNote }
     // Whites under blacks: draw in array order (whites first per row).
     for (const key of this.layout.keys) {
       const colors = keyColors(app.scheme, key, opts)
       const active = activeKeyIds.has(key.id)
-      this.drawKey(ctx, key, colors.fill, colors.stroke, active, activeKeyIds.get(key.id) ?? 0)
+      let fill = colors.fill
+      const f = this.field.get(key.id)
+      if (!active && Math.abs(f) > 0.008) {
+        const hsl = parseHsl(fill)
+        if (hsl) {
+          // Crests lighten toward white; troughs dip slightly darker. The
+          // gain compensates for the wave's energy thinning as it spreads.
+          const amt = Math.max(-0.4, Math.min(1, f * 3.5))
+          const l = Math.max(3, Math.min(94, hsl.l + (90 - hsl.l) * amt))
+          fill = `hsl(${hsl.h}, ${hsl.s}%, ${l}%)`
+        }
+      }
+      this.drawKey(ctx, key, fill, colors.stroke, active, activeKeyIds.get(key.id) ?? 0)
       if (app.labels && (key.kind !== 'black' || key.char)) {
         ctx.fillStyle = active ? '#10141c' : colors.label
         ctx.font = `${Math.max(9, Math.min(16, key.w * 0.22))}px 'Avenir Next Condensed', 'Arial Narrow', sans-serif`
@@ -211,8 +226,6 @@ export class PadView {
         ctx.restore()
       }
     }
-
-    this.drawRipples(ctx)
   }
 
   private drawKey(
@@ -249,19 +262,6 @@ export class PadView {
     ctx.restore()
   }
 
-  private drawRipples(ctx: CanvasRenderingContext2D): void {
-    const now = performance.now()
-    const DURATION = 600
-    this.ripples = this.ripples.filter((r) => now - r.start < DURATION)
-    for (const r of this.ripples) {
-      const t = (now - r.start) / DURATION
-      ctx.beginPath()
-      ctx.arc(r.x, r.y, 12 + t * 70, 0, Math.PI * 2)
-      ctx.strokeStyle = `rgba(255,255,255,${0.5 * (1 - t)})`
-      ctx.lineWidth = 2
-      ctx.stroke()
-    }
-  }
 }
 
 function roundRect(

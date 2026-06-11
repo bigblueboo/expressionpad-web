@@ -46,8 +46,18 @@ function schemeHsl(scheme: string, key: KeyShape, opts: ColorOpts): HSL {
   }
 }
 
+/** Pitch classes that are black keys on a conventional piano. */
+const BLACK_PCS = new Set([1, 3, 6, 8, 10])
+
 export function keyColors(scheme: string, key: KeyShape, opts: ColorOpts): KeyColors {
   let { h, s, l } = schemeHsl(scheme, key, opts)
+  // Grid keys take a cue from the piano: conventional black-key pitch
+  // classes go dark like piano blacks, so the natural lattice is legible
+  // at a glance. An accidental root keeps a little extra light.
+  if ((key.kind === 'rect' || key.kind === 'hex') && BLACK_PCS.has(pitchClass(key.note))) {
+    s = Math.min(s, 50)
+    l = pitchClass(key.note) === pitchClass(opts.baseNote) ? 26 : 16
+  }
   // Piano rows: whites stay bright, blacks stay dark, both tinted by the
   // scheme — richly for colored schemes, near-neutral for Mono.
   if (key.kind === 'white') {

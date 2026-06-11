@@ -34,6 +34,8 @@ export class TouchTracker {
     private getPad: () => PadConfig,
     private sink: VoiceSink,
     private onChange: () => void = () => {},
+    /** Fires at event time for every note onset (down or drag retrigger). */
+    private onTrigger: (key: KeyShape) => void = () => {},
   ) {}
 
   down(id: number, x: number, y: number): void {
@@ -48,6 +50,7 @@ export class TouchTracker {
     }
     this.active.set(id, touch)
     this.sink.noteOn(id, clampMidi(key.note), vel)
+    this.onTrigger(key)
     this.onChange()
   }
 
@@ -69,7 +72,10 @@ export class TouchTracker {
       }
       // Highlight follows the nearest key in the origin row.
       const over = layout.hitTest(x, y)
-      if (over && over.row === touch.originRow) touch.key = over
+      if (over && over.row === touch.originRow && over.id !== touch.key.id) {
+        touch.key = over
+        this.onTrigger(over)
+      }
     } else {
       const over = layout.hitTest(x, y)
       if (over && over.id !== touch.key.id) {
@@ -81,6 +87,7 @@ export class TouchTracker {
         touch.pitch = over.note
         touch.pressure = 0
         this.sink.noteOn(id, clampMidi(over.note), vel)
+        this.onTrigger(over)
       }
     }
 
