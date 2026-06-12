@@ -65,6 +65,10 @@ export interface AppearanceConfig {
   labels: boolean
   brightness: number
   ripples: boolean
+  /** Strength of the ripple wave's visual effect, 0..1. */
+  rippleAmount: number
+  /** Light/dark spread between piano whites and blacks, 0..1. */
+  contrast: number
 }
 
 export interface SamplerConfig {
@@ -127,7 +131,10 @@ export function defaultState(): AppState {
       outEnabled: false, outputId: '', bendRange: 48, sendY: true,
       inEnabled: false, inputId: '', localSound: true,
     },
-    appearance: { scheme: 'Ocean', labels: true, brightness: 0.65, ripples: true },
+    appearance: {
+      scheme: 'Ocean', labels: true, brightness: 0.65,
+      ripples: true, rippleAmount: 0.5, contrast: 0.5,
+    },
     ui: { panelOpen: true, tab: 'pad' },
   }
 }

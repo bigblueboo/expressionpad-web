@@ -18,6 +18,8 @@ export type SchemeName = (typeof SCHEME_NAMES)[number]
 export interface ColorOpts {
   /** 0..1 overall brightness. */
   brightness: number
+  /** 0..1 light/dark spread between piano whites and blacks. */
+  contrast: number
   /** Base note of the pad — its pitch class is emphasized as the root. */
   baseNote: number
 }
@@ -51,21 +53,24 @@ const BLACK_PCS = new Set([1, 3, 6, 8, 10])
 
 export function keyColors(scheme: string, key: KeyShape, opts: ColorOpts): KeyColors {
   let { h, s, l } = schemeHsl(scheme, key, opts)
+  // CONTRAST widens or narrows the light/dark spread between whites and
+  // blacks (0.5 keeps blacks at their resting depth).
+  const c = opts.contrast
   // Grid keys take a cue from the piano: conventional black-key pitch
   // classes go dark like piano blacks, so the natural lattice is legible
   // at a glance. An accidental root keeps a little extra light.
   if ((key.kind === 'rect' || key.kind === 'hex') && BLACK_PCS.has(pitchClass(key.note))) {
     s = Math.min(s, 50)
-    l = pitchClass(key.note) === pitchClass(opts.baseNote) ? 26 : 16
+    l = (pitchClass(key.note) === pitchClass(opts.baseNote) ? 32 : 22) - 12 * c
   }
   // Piano rows: whites stay bright, blacks stay dark, both tinted by the
   // scheme — richly for colored schemes, near-neutral for Mono.
   if (key.kind === 'white') {
     s = scheme === 'Mono' ? 6 : Math.min(s + 5, 62)
-    l = scheme === 'Mono' ? 80 : 66
+    l = scheme === 'Mono' ? 58 + 36 * c : 46 + 30 * c
   } else if (key.kind === 'black') {
     s = Math.min(s, 55)
-    l = 16
+    l = 22 - 12 * c
   }
   l = Math.max(4, Math.min(92, l * (0.55 + 0.9 * opts.brightness)))
   const fill = `hsl(${h}, ${s}%, ${l}%)`

@@ -29,10 +29,12 @@ available — the internal synth still works.
   portrait or landscape. Row tunings (fourths, fifths, guitar EADGBE,
   Open C…), column scales (chromatic, modes, pentatonics…), any base note.
   Conventional black-key pitch classes are darkened like piano blacks, so
-  the lattice reads at a glance.
+  the lattice reads at a glance; the CONTRAST knob dials the white/black
+  spread.
 - **Fluid ripples**: every note onset drops a brightness "pebble" that
   propagates key-to-key through the lattice as a damped wave with viscosity
-  — crests lighten keys toward white, troughs dip darker.
+  — crests lighten keys toward white, troughs dip gently darker. The RIPPLE
+  knob dials the effect from subtle to splashy.
 - **Typing-keyboard layouts**: for desktop users, two layouts mapped to the
   physical keyboard. Keys (Chromatic) walks each QWERTY row chromatically
   (z x c v → C C# D Eb) with the row tuning between rows; Keys (Piano)

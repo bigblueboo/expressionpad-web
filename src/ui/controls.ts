@@ -298,7 +298,9 @@ function padPage(store: Store): HTMLElement {
       select(store, 'appearance.scheme', 'coloring', [...SCHEME_NAMES]),
       toggle(store, 'appearance.labels', 'labels'),
       knob(store, 'appearance.brightness', 'bright'),
+      knob(store, 'appearance.contrast', 'contrast'),
       toggle(store, 'appearance.ripples', 'ripples'),
+      knob(store, 'appearance.rippleAmount', 'ripple'),
     ),
   )
 }

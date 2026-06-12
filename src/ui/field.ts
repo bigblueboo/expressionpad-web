@@ -14,9 +14,9 @@ import type { KeyShape } from '../core/layout'
 const K_NEIGHBORS = 8
 /** Drop candidate neighbors beyond this normalized distance² (adjacent ≈ 1, diagonal ≈ 2, two-away ≈ 4). */
 const MAX_ND2 = 3.0
-const WAVE_SPEED2 = 320 // (key-units/s)² — how fast the front travels
-const VISCOSITY = 1.5 // /s — Navier-Stokes-style diffusion of velocity
-const DAMPING = 1.5 // /s — velocity drag
+const WAVE_SPEED2 = 380 // (key-units/s)² — how fast the front travels
+const VISCOSITY = 4.0 // /s — Navier-Stokes-style diffusion of velocity
+const DAMPING = 4.0 // /s — velocity drag
 const FADE = 1.0 // /s — brightness relaxation toward rest
 const MAX_SUBSTEP = 1 / 90 // explicit integration stays stable below this
 

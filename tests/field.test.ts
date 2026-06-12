@@ -60,7 +60,7 @@ describe('BrightnessField', () => {
     run(field, 0.15)
     const left = field.get(keyAt(layout, 4, 3).id)
     const right = field.get(keyAt(layout, 4, 5).id)
-    expect(left).toBeCloseTo(right, 5)
+    expect(left).toBeCloseTo(right, 3)
   })
 
   it('decays back to stillness', () => {

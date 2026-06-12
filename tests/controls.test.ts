@@ -150,6 +150,18 @@ describe('control panel', () => {
     expect(values).toEqual(['square', 'hex', 'piano', 'kbd-chromatic', 'kbd-piano'])
   })
 
+  it('selects blur after a change so the typing keyboard keeps playing', () => {
+    const { root } = setup()
+    const sel = root.querySelector<HTMLSelectElement>(
+      '[data-page="pad"] select[aria-label="layout"]',
+    )!
+    sel.focus()
+    expect(document.activeElement).toBe(sel)
+    sel.value = 'kbd-piano'
+    sel.dispatchEvent(new Event('change'))
+    expect(document.activeElement).not.toBe(sel)
+  })
+
   it('selecting a preset applies the whole patch', () => {
     const { root, store } = setup()
     const sel = root.querySelector<HTMLSelectElement>(

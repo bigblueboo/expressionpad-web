@@ -189,7 +189,12 @@ export class PadView {
     this.lastFrame = now
     this.field.step(dt)
 
-    const opts = { brightness: app.brightness, baseNote: this.store.state.pad.baseNote }
+    const opts = {
+      brightness: app.brightness,
+      contrast: app.contrast,
+      baseNote: this.store.state.pad.baseNote,
+    }
+    const rippleGain = 7 * app.rippleAmount
     // Whites under blacks: draw in array order (whites first per row).
     for (const key of this.layout.keys) {
       const colors = keyColors(app.scheme, key, opts)
@@ -199,9 +204,13 @@ export class PadView {
       if (!active && Math.abs(f) > 0.008) {
         const hsl = parseHsl(fill)
         if (hsl) {
-          // Crests lighten toward white; troughs dip slightly darker. The
-          // gain compensates for the wave's energy thinning as it spreads.
-          const amt = Math.max(-0.4, Math.min(1, f * 3.5))
+          // Crests lighten toward white; troughs dip darker at reduced gain
+          // so the rebound reads as a gentle dip, not a flicker. Crest gain
+          // compensates for the wave's energy thinning as it spreads.
+          const amt =
+            f >= 0
+              ? Math.min(1, f * rippleGain)
+              : Math.max(-0.18, f * rippleGain * 0.35)
           const l = Math.max(3, Math.min(94, hsl.l + (90 - hsl.l) * amt))
           fill = `hsl(${hsl.h}, ${hsl.s}%, ${l}%)`
         }

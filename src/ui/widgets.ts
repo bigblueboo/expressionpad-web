@@ -118,7 +118,12 @@ export function select(
     sel.appendChild(opt)
   }
   sel.value = store.get<string>(path)
-  sel.addEventListener('change', () => store.set(path, sel.value))
+  sel.addEventListener('change', () => {
+    store.set(path, sel.value)
+    // Drop focus so the typing keyboard goes back to playing notes —
+    // a focused select would otherwise swallow keydowns.
+    sel.blur()
+  })
   store.subscribe((_s, p) => {
     if (p === path) sel.value = store.get<string>(path)
   })

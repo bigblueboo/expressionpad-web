@@ -6,7 +6,7 @@ function key(note: number, kind: KeyShape['kind'] = 'rect'): KeyShape {
   return { id: note, note, row: 0, col: 0, kind, x: 0, y: 0, w: 50, h: 50, cx: 25, cy: 25 }
 }
 
-const opts = { brightness: 0.65, baseNote: 48 }
+const opts = { brightness: 0.65, contrast: 0.5, baseNote: 48 }
 
 describe('key colors', () => {
   it('every scheme yields parseable hsl for all pitch classes', () => {
@@ -49,6 +49,23 @@ describe('key colors', () => {
       expect(white.l, scheme).toBeGreaterThan(55)
       expect(black.l, scheme).toBeLessThan(30)
     }
+  })
+
+  it('contrast widens the white/black spread', () => {
+    const low = { ...opts, contrast: 0.2 }
+    const high = { ...opts, contrast: 0.9 }
+    for (const scheme of SCHEME_NAMES) {
+      const whiteLow = parseHsl(keyColors(scheme, key(60, 'white'), low).fill)!
+      const whiteHigh = parseHsl(keyColors(scheme, key(60, 'white'), high).fill)!
+      const blackLow = parseHsl(keyColors(scheme, key(61, 'black'), low).fill)!
+      const blackHigh = parseHsl(keyColors(scheme, key(61, 'black'), high).fill)!
+      expect(whiteHigh.l, scheme).toBeGreaterThan(whiteLow.l)
+      expect(blackHigh.l, scheme).toBeLessThan(blackLow.l)
+    }
+    // Grid accidentals follow the black keys.
+    const accLow = parseHsl(keyColors('Ocean', key(61, 'rect'), low).fill)!
+    const accHigh = parseHsl(keyColors('Ocean', key(61, 'rect'), high).fill)!
+    expect(accHigh.l).toBeLessThan(accLow.l)
   })
 
   it('brightness scales lightness', () => {
