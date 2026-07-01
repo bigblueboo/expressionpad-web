@@ -5,3 +5,8 @@ dist/
 
 # Local Netlify folder
 .netlify
+
+# iOS / SwiftPM
+ios/Core/.build/
+ios/**/xcuserdata/
+ios/DerivedData/
