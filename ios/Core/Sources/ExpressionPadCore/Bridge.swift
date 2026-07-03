@@ -130,15 +130,54 @@ public final class StoreKernelBridge {
         pushAll()
     }
 
+    /// One row per kernel-addressable store leaf: web dot-path → param id +
+    /// value extractor. The single source of truth for param plumbing — a
+    /// change pushes exactly one event; startup replays the whole table.
+    static let paramTable: [String: (ParamID, (AppState) -> Float)] = [
+        "synth.gen1.semi": (.gen1Semi, { Float($0.synth.gen1.semi) }),
+        "synth.gen1.tune": (.gen1Tune, { Float($0.synth.gen1.tune) }),
+        "synth.gen1.level": (.gen1Level, { Float($0.synth.gen1.level) }),
+        "synth.gen2.semi": (.gen2Semi, { Float($0.synth.gen2.semi) }),
+        "synth.gen2.tune": (.gen2Tune, { Float($0.synth.gen2.tune) }),
+        "synth.gen2.level": (.gen2Level, { Float($0.synth.gen2.level) }),
+        "synth.env.a": (.envA, { Float($0.synth.env.a) }),
+        "synth.env.d": (.envD, { Float($0.synth.env.d) }),
+        "synth.env.s": (.envS, { Float($0.synth.env.s) }),
+        "synth.env.r": (.envR, { Float($0.synth.env.r) }),
+        "synth.filter.cutoff": (.filterCutoff, { Float($0.synth.filter.cutoff) }),
+        "synth.filter.res": (.filterRes, { Float($0.synth.filter.res) }),
+        "synth.filter.env": (.filterEnv, { Float($0.synth.filter.env) }),
+        "synth.lfo.rate": (.lfoRate, { Float($0.synth.lfo.rate) }),
+        "synth.lfo.depth": (.lfoDepth, { Float($0.synth.lfo.depth) }),
+        "synth.lfo.target": (.lfoTargetFilter, { $0.synth.lfo.target == .filter ? 1 : 0 }),
+        "synth.level": (.synthLevel, { Float($0.synth.level) }),
+        "fx.reverb.fdbk": (.reverbFdbk, { Float($0.fx.reverb.fdbk) }),
+        "fx.reverb.mix": (.reverbMix, { Float($0.fx.reverb.mix) }),
+        "fx.reverb.on": (.reverbOn, { $0.fx.reverb.on ? 1 : 0 }),
+        "fx.delay.time": (.delayTime, { Float($0.fx.delay.time) }),
+        "fx.delay.fdbk": (.delayFdbk, { Float($0.fx.delay.fdbk) }),
+        "fx.delay.mix": (.delayMix, { Float($0.fx.delay.mix) }),
+        "fx.delay.on": (.delayOn, { $0.fx.delay.on ? 1 : 0 }),
+        "fx.distort.amt": (.distortAmt, { Float($0.fx.distort.amt) }),
+        "fx.distort.on": (.distortOn, { $0.fx.distort.on ? 1 : 0 }),
+        "fx.fatten.amt": (.fattenAmt, { Float($0.fx.fatten.amt) }),
+        "fx.fatten.on": (.fattenOn, { $0.fx.fatten.on ? 1 : 0 }),
+        "sampler.level": (.samplerLevel, { Float($0.sampler.level) }),
+        "sampler.attack": (.samplerAttack, { Float($0.sampler.attack) }),
+        "sampler.release": (.samplerRelease, { Float($0.sampler.release) }),
+        "sampler.retrig": (.samplerRetrig, { $0.sampler.retrig ? 1 : 0 }),
+        "pad.slide": (.slide, { Float($0.pad.slide) }),
+    ]
+
     func onChange(_ path: String) {
-        let s = store.state
-        if path.hasPrefix("synth") || path.hasPrefix("fx") || path == "pad.slide"
-            || path.hasPrefix("sampler") {
-            if path.contains("morph") || path.contains("bright") { pushWavetables() }
-            if path == "sampler.preset" || path == "sampler.userRoot" {
-                registry.select(preset: s.sampler.preset, userRoot: s.sampler.userRoot)
-            }
-            pushParams()
+        if path == "synth.gen1.morph" || path == "synth.gen2.morph" || path == "synth.bright" {
+            pushWavetables()
+        }
+        if path == "sampler.preset" || path == "sampler.userRoot" {
+            registry.select(preset: store.state.sampler.preset, userRoot: store.state.sampler.userRoot)
+        }
+        if let (pid, value) = Self.paramTable[path] {
+            ring.push(.param(pid, value(store.state)))
         }
     }
 
@@ -148,32 +187,11 @@ public final class StoreKernelBridge {
         ring.push(.wavetable(gen: 1, table: pool2.build(morph: s.gen2.morph, bright: s.bright)))
     }
 
-    /// Push the full parameter set; the kernel treats repeats as no-ops.
-    func pushParams() {
-        let s = store.state
-        let p: [(ParamID, Double)] = [
-            (.gen1Semi, Double(s.synth.gen1.semi)), (.gen1Tune, s.synth.gen1.tune), (.gen1Level, s.synth.gen1.level),
-            (.gen2Semi, Double(s.synth.gen2.semi)), (.gen2Tune, s.synth.gen2.tune), (.gen2Level, s.synth.gen2.level),
-            (.envA, s.synth.env.a), (.envD, s.synth.env.d), (.envS, s.synth.env.s), (.envR, s.synth.env.r),
-            (.filterCutoff, s.synth.filter.cutoff), (.filterRes, s.synth.filter.res), (.filterEnv, s.synth.filter.env),
-            (.lfoRate, s.synth.lfo.rate), (.lfoDepth, s.synth.lfo.depth),
-            (.lfoTargetFilter, s.synth.lfo.target == .filter ? 1 : 0),
-            (.synthLevel, s.synth.level),
-            (.reverbFdbk, s.fx.reverb.fdbk), (.reverbMix, s.fx.reverb.mix), (.reverbOn, s.fx.reverb.on ? 1 : 0),
-            (.delayTime, s.fx.delay.time), (.delayFdbk, s.fx.delay.fdbk), (.delayMix, s.fx.delay.mix),
-            (.delayOn, s.fx.delay.on ? 1 : 0),
-            (.distortAmt, s.fx.distort.amt), (.distortOn, s.fx.distort.on ? 1 : 0),
-            (.fattenAmt, s.fx.fatten.amt), (.fattenOn, s.fx.fatten.on ? 1 : 0),
-            (.samplerLevel, s.sampler.level), (.samplerAttack, s.sampler.attack),
-            (.samplerRelease, s.sampler.release), (.samplerRetrig, s.sampler.retrig ? 1 : 0),
-            (.slide, s.pad.slide),
-        ]
-        for (pid, v) in p { ring.push(.param(pid, Float(v))) }
-    }
-
     public func pushAll() {
         pushWavetables()
-        pushParams()
+        for (pid, value) in Self.paramTable.values {
+            ring.push(.param(pid, value(store.state)))
+        }
         registry.select(preset: store.state.sampler.preset, userRoot: store.state.sampler.userRoot)
     }
 }

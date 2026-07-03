@@ -420,7 +420,6 @@ public final class SynthKernel {
         let dt = Float(n) / sr
         let a02 = smoothingAlpha(dt: dt, tau: 0.02)
         let a015 = smoothingAlpha(dt: dt, tau: 0.015)
-        let a05 = smoothingAlpha(dt: dt, tau: 0.05)
         let a03 = smoothingAlpha(dt: dt, tau: 0.03)
 
         // LFO (block-rate; max 30 Hz vs 1.5 kHz block rate).
@@ -452,30 +451,18 @@ public final class SynthKernel {
         }
 
         // ----- FX chain: dist → delay → reverb → master → limiter
-        dist.k = 1 + clamp(params.distortAmt, 0, 1) * 30
-        dist.wet.target = params.distortOn > 0.5 ? 1 : 0
-        dist.dry.target = params.distortOn > 0.5 ? 0 : 1
-        let dWet = dist.wet.step(a02)
-        let dDry = dist.dry.step(a02)
-
-        delay.timeSm.target = clamp(params.delayTime, 0.01, 2)
-        delay.fdbkSm.target = clamp(params.delayFdbk, 0, 0.9)
-        delay.wetSm.target = params.delayOn > 0.5 ? params.delayMix : 0
-        let dlTime = delay.timeSm.step(a05)
-        let dlFdbk = delay.fdbkSm.step(a02)
-        let dlWet = delay.wetSm.step(a02)
-
-        reverb.setDecay(seconds: lerp(0.4, 5, clamp(params.reverbFdbk, 0, 1)))
-        reverb.wetSm.target = params.reverbOn > 0.5 ? params.reverbMix : 0
-        let rvWet = reverb.wetSm.step(a02)
-
+        dist.update(dt: dt, amt: params.distortAmt, on: params.distortOn > 0.5)
+        delay.update(dt: dt, time: params.delayTime, fdbk: params.delayFdbk,
+                     wet: params.delayOn > 0.5 ? params.delayMix : 0)
+        reverb.update(dt: dt, fdbk: params.reverbFdbk,
+                      wet: params.reverbOn > 0.5 ? params.reverbMix : 0)
         master.target = params.synthLevel
         let masterGain = master.step(a02)
 
         var rv: (l: Float, r: Float) = (0, 0)
+        let rvWet = reverb.wetGain
         for i in 0..<n {
-            let distorted = dist.process(bus[i], wetGain: dWet, dryGain: dDry)
-            let delayed = delay.process(distorted, time: dlTime, fdbk: dlFdbk, wet: dlWet)
+            let delayed = delay.process(dist.process(bus[i]))
             reverb.process(delayed, into: &rv)
             var l = (delayed + rv.l * rvWet) * masterGain
             var r = (delayed + rv.r * rvWet) * masterGain

@@ -15,7 +15,7 @@ private let TABS: [(id: UiTab, label: String)] = [
 
 struct ControlsView: View {
     @ObservedObject var store: Store
-    @ObservedObject var audio: AudioEngine
+    let audio: AudioEngine
     @ObservedObject var midi: MidiCenter
     let router: Router
 
@@ -111,7 +111,7 @@ private struct VoiceGroup: View {
     @ObservedObject var store: Store
 
     var body: some View {
-        GroupBox(title: "VOICE") {
+        PanelGroup(title: "VOICE") {
             SelectMenu(
                 selection: store.binding(\.voice), label: "active",
                 options: [(VoiceSource.synth, "Synth"), (VoiceSource.sampler, "Sampler")]
@@ -127,7 +127,7 @@ private struct SynthPage: View {
 
     var body: some View {
         Flow {
-            GroupBox(title: "PRESET") {
+            PanelGroup(title: "PRESET") {
                 SelectMenu(
                     selection: Binding(
                         get: { store.state.synth.preset },
@@ -140,21 +140,21 @@ private struct SynthPage: View {
             VoiceGroup(store: store)
             genGroup("GENERATOR 1", \.synth.gen1)
             genGroup("GENERATOR 2", \.synth.gen2)
-            GroupBox(title: "TONE") {
+            PanelGroup(title: "TONE") {
                 Knob(value: store.binding(\.synth.bright), label: "bright")
             }
-            GroupBox(title: "ENVELOPE") {
+            PanelGroup(title: "ENVELOPE") {
                 Knob(value: store.binding(\.synth.env.a), label: "attack", min: 0.001, max: 2, fmt: secFmt)
                 Knob(value: store.binding(\.synth.env.d), label: "decay", min: 0.01, max: 3, fmt: secFmt)
                 Knob(value: store.binding(\.synth.env.s), label: "sustain")
                 Knob(value: store.binding(\.synth.env.r), label: "release", min: 0.02, max: 5, fmt: secFmt)
             }
-            GroupBox(title: "FILTER") {
+            PanelGroup(title: "FILTER") {
                 Knob(value: store.binding(\.synth.filter.cutoff), label: "cutoff")
                 Knob(value: store.binding(\.synth.filter.res), label: "res")
                 Knob(value: store.binding(\.synth.filter.env), label: "touch")
             }
-            GroupBox(title: "LFO") {
+            PanelGroup(title: "LFO") {
                 Knob(value: store.binding(\.synth.lfo.rate), label: "rate", min: 0.05, max: 20,
                      fmt: { String(format: "%.1fHz", $0) })
                 Knob(value: store.binding(\.synth.lfo.depth), label: "depth")
@@ -167,7 +167,7 @@ private struct SynthPage: View {
     }
 
     private func genGroup(_ title: String, _ gen: WritableKeyPath<AppState, GenConfig>) -> some View {
-        GroupBox(title: title) {
+        PanelGroup(title: title) {
             Knob(value: store.binding(gen.appending(path: \.morph)), label: "wave")
             StepperControl(
                 value: store.binding(gen.appending(path: \.semi)), label: "semi",
@@ -192,7 +192,7 @@ private struct SmplrPage: View {
 
     var body: some View {
         Flow {
-            GroupBox(title: "SAMPLER") {
+            PanelGroup(title: "SAMPLER") {
                 SelectMenu(
                     selection: store.binding(\.sampler.preset), label: "preset",
                     options: SAMPLE_NAMES + [USER_PRESET]
@@ -205,12 +205,12 @@ private struct SmplrPage: View {
                     .foregroundColor(Theme.textDim)
                     .frame(maxWidth: 180, alignment: .leading)
             }
-            GroupBox(title: "LEVEL") {
+            PanelGroup(title: "LEVEL") {
                 Knob(value: store.binding(\.sampler.level), label: "level")
                 Knob(value: store.binding(\.sampler.attack), label: "attack", min: 0.002, max: 0.5, fmt: secFmt)
                 Knob(value: store.binding(\.sampler.release), label: "release", min: 0.02, max: 3, fmt: secFmt)
             }
-            GroupBox(title: "USER ROOT") {
+            PanelGroup(title: "USER ROOT") {
                 StepperControl(
                     value: store.binding(\.sampler.userRoot), label: "root",
                     min: 24, max: 96, fmt: { noteName($0, withOctave: true) }
@@ -251,22 +251,22 @@ private struct FxPage: View {
 
     var body: some View {
         Flow {
-            GroupBox(title: "REVERB") {
+            PanelGroup(title: "REVERB") {
                 Knob(value: store.binding(\.fx.reverb.fdbk), label: "fdbk")
                 Knob(value: store.binding(\.fx.reverb.mix), label: "mix")
                 ToggleSquare(isOn: store.binding(\.fx.reverb.on), label: "on")
             }
-            GroupBox(title: "DELAY") {
+            PanelGroup(title: "DELAY") {
                 Knob(value: store.binding(\.fx.delay.time), label: "time", min: 0.02, max: 1.5, fmt: secFmt)
                 Knob(value: store.binding(\.fx.delay.fdbk), label: "fdbk", min: 0, max: 0.9)
                 Knob(value: store.binding(\.fx.delay.mix), label: "mix")
                 ToggleSquare(isOn: store.binding(\.fx.delay.on), label: "on")
             }
-            GroupBox(title: "DISTORT") {
+            PanelGroup(title: "DISTORT") {
                 Knob(value: store.binding(\.fx.distort.amt), label: "amt")
                 ToggleSquare(isOn: store.binding(\.fx.distort.on), label: "on")
             }
-            GroupBox(title: "FATTEN") {
+            PanelGroup(title: "FATTEN") {
                 Knob(value: store.binding(\.fx.fatten.amt), label: "fatness")
                 ToggleSquare(isOn: store.binding(\.fx.fatten.on), label: "on")
             }
@@ -281,7 +281,7 @@ private struct PadPage: View {
 
     var body: some View {
         Flow {
-            GroupBox(title: "PADMATRIX") {
+            PanelGroup(title: "PADMATRIX") {
                 SelectMenu(
                     selection: store.binding(\.pad.layout), label: "layout",
                     options: [
@@ -301,13 +301,13 @@ private struct PadPage: View {
                     min: 12, max: 96, fmt: { noteName($0, withOctave: true) }
                 )
             }
-            GroupBox(title: "TOUCH") {
+            PanelGroup(title: "TOUCH") {
                 Knob(value: store.binding(\.pad.slide), label: "slide")
                 ToggleSquare(isOn: store.binding(\.pad.frets), label: "frets")
                 ToggleSquare(isOn: store.binding(\.pad.touchVel), label: "tch vel")
                 ToggleSquare(isOn: store.binding(\.pad.aftertouch), label: "aftrtch")
             }
-            GroupBox(title: "APPEARANCE") {
+            PanelGroup(title: "APPEARANCE") {
                 SelectMenu(selection: store.binding(\.appearance.scheme), label: "coloring", options: SCHEME_NAMES)
                 ToggleSquare(isOn: store.binding(\.appearance.labels), label: "labels")
                 Knob(value: store.binding(\.appearance.brightness), label: "bright")
@@ -328,7 +328,7 @@ private struct MidiPage: View {
 
     var body: some View {
         Flow {
-            GroupBox(title: "MIDI OUT") {
+            PanelGroup(title: "MIDI OUT") {
                 ToggleSquare(isOn: store.binding(\.midi.outEnabled), label: "active")
                 SelectMenu(
                     selection: store.binding(\.midi.outputId), label: "output",
@@ -337,14 +337,14 @@ private struct MidiPage: View {
                 StepperControl(value: store.binding(\.midi.bendRange), label: "bend rng", min: 1, max: 96)
                 ToggleSquare(isOn: store.binding(\.midi.sendY), label: "send cc74")
             }
-            GroupBox(title: "MIDI IN") {
+            PanelGroup(title: "MIDI IN") {
                 ToggleSquare(isOn: store.binding(\.midi.inEnabled), label: "active")
                 SelectMenu(
                     selection: store.binding(\.midi.inputId), label: "input",
                     options: portOptions(midi.sources)
                 )
             }
-            GroupBox(title: "SYSTEM") {
+            PanelGroup(title: "SYSTEM") {
                 ToggleSquare(isOn: store.binding(\.midi.localSound), label: "synth")
                 Text(statusText)
                     .font(Theme.font(10))

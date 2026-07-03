@@ -11,9 +11,10 @@ final class AudioEngine: ObservableObject {
     let synthSink: KernelVoiceSink
     let samplerSink: KernelVoiceSink
 
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
-    private(set) var running = false
+
+    var running: Bool { engine.isRunning }
 
     init(store: Store) {
         self.store = store
@@ -36,6 +37,7 @@ final class AudioEngine: ObservableObject {
         synthSink = KernelVoiceSink(ring: kernel.events, dest: .synth)
         samplerSink = KernelVoiceSink(ring: kernel.events, dest: .sampler)
 
+        buildGraph()
         start()
         observeSession()
     }
@@ -48,8 +50,9 @@ final class AudioEngine: ObservableObject {
         return Int(((session.outputLatency + session.ioBufferDuration) * 1000).rounded())
     }
 
-    func start() {
-        guard !running else { return }
+    /// Attach the kernel's source node to the (fresh) engine. Called once at
+    /// init and again only when media services reset hands us a dead engine.
+    private func buildGraph() {
         let format = AVAudioFormat(
             standardFormatWithSampleRate: kernel.sampleRate, channels: 2
         )!
@@ -67,12 +70,12 @@ final class AudioEngine: ObservableObject {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
         sourceNode = node
-        do {
-            try engine.start()
-            running = true
-        } catch {
-            running = false
-        }
+    }
+
+    /// Idempotent: safe to call on every foregrounding.
+    func start() {
+        guard !engine.isRunning else { return }
+        try? engine.start()
     }
 
     private func observeSession() {
@@ -96,8 +99,10 @@ final class AudioEngine: ObservableObject {
             forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
+            // The old engine (and its nodes) are dead after a reset; rebuild.
             try? AVAudioSession.sharedInstance().setActive(true)
-            self.running = false
+            self.engine = AVAudioEngine()
+            self.buildGraph()
             self.start()
         }
     }

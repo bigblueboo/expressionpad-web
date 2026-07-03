@@ -28,6 +28,8 @@ final class PadSurfaceView: UIView {
     private var lastFrame = CACurrentMediaTime()
     private var touchIds: [UITouch: Int] = [:]
     private var nextTouchId = 1
+    private var builtSize = CGSize.zero
+    private var unsubscribe: (() -> Void)?
 
     init(store: Store, sink: VoiceSink) {
         self.store = store
@@ -53,7 +55,7 @@ final class PadSurfaceView: UIView {
         )
         keyboard = KeyboardInput(getLayout: { [unowned self] in self.layout }, tracker: tracker)
 
-        store.subscribe { [weak self] _, path in
+        unsubscribe = store.subscribe { [weak self] _, path in
             guard let self else { return }
             if path.hasPrefix("pad") || path.hasPrefix("appearance") {
                 if path.hasPrefix("pad") && !path.contains("slide") { self.rebuild() }
@@ -72,6 +74,7 @@ final class PadSurfaceView: UIView {
 
     deinit {
         displayLink?.invalidate()
+        unsubscribe?()
     }
 
     static func layoutParams(_ store: Store, _ width: Double, _ height: Double) -> LayoutParams {
@@ -92,13 +95,18 @@ final class PadSurfaceView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if bounds.width > 0 && bounds.height > 0 { rebuild() }
-        requestRender()
+        // Only a real size change forces a rebuild (which cancels live notes);
+        // spurious layout passes must not cut a performance short.
+        if bounds.size != builtSize && bounds.width > 0 && bounds.height > 0 {
+            rebuild()
+            requestRender()
+        }
     }
 
     private func rebuild() {
         tracker.cancelAll()
         touchIds.removeAll()
+        builtSize = bounds.size
         layout = buildLayout(PadSurfaceView.layoutParams(store, bounds.width, bounds.height))
         field = BrightnessField(layout.keys)
     }
@@ -125,23 +133,19 @@ final class PadSurfaceView: UIView {
 
     // ------------------------------------------------------------ touches ---
 
-    private func id(for touch: UITouch) -> Int {
-        if let existing = touchIds[touch] { return existing }
-        nextTouchId += 1
-        touchIds[touch] = nextTouchId
-        return nextTouchId
-    }
-
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for t in touches {
+            nextTouchId += 1
+            touchIds[t] = nextTouchId
             let p = t.location(in: self)
-            tracker.down(id(for: t), p.x, p.y)
+            tracker.down(nextTouchId, p.x, p.y)
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         for t in touches {
-            let tid = id(for: t)
+            // Ids exist only for touches that began here (rebuild drops them).
+            guard let tid = touchIds[t] else { continue }
             // Coalesced touches keep 120 Hz glides smooth on ProMotion.
             for c in event?.coalescedTouches(for: t) ?? [t] {
                 let p = c.location(in: self)

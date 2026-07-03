@@ -18,6 +18,9 @@ final class MidiCenter: ObservableObject {
     private var outPort = MIDIPortRef()
     private var inPort = MIDIPortRef()
     private var connectedSource: MIDIEndpointRef = 0
+    /// Resolved output endpoint, so per-message sends (glides run at 120 Hz)
+    /// don't re-enumerate CoreMIDI. Cleared on device or selection changes.
+    private var cachedDestination: MIDIEndpointRef?
 
     @Published private(set) var destinations: [MidiEndpoint] = []
     @Published private(set) var sources: [MidiEndpoint] = []
@@ -55,6 +58,9 @@ final class MidiCenter: ObservableObject {
             if path == "midi.inEnabled" || path == "midi.inputId" {
                 self?.syncInputConnection()
             }
+            if path == "midi.outputId" {
+                self?.cachedDestination = nil
+            }
         }
     }
 
@@ -65,6 +71,7 @@ final class MidiCenter: ObservableObject {
     }
 
     func refreshEndpoints() {
+        cachedDestination = nil
         var dests: [MidiEndpoint] = []
         for i in 0..<MIDIGetNumberOfDestinations() {
             let ep = MIDIGetDestination(i)
@@ -93,14 +100,19 @@ final class MidiCenter: ObservableObject {
     }
 
     private func destination() -> MIDIEndpointRef? {
+        if let cached = cachedDestination { return cached == 0 ? nil : cached }
         let wanted = store.state.midi.outputId
-        var first: MIDIEndpointRef?
+        var found: MIDIEndpointRef?
         for i in 0..<MIDIGetNumberOfDestinations() {
             let ep = MIDIGetDestination(i)
-            if first == nil { first = ep }
-            if !wanted.isEmpty && uniqueId(ep) == wanted { return ep }
+            if found == nil { found = ep }
+            if !wanted.isEmpty && uniqueId(ep) == wanted {
+                found = ep
+                break
+            }
         }
-        return first
+        cachedDestination = found ?? 0 // cache the miss too
+        return found
     }
 
     private func sendWords(_ words: [UInt32]) {
@@ -155,8 +167,9 @@ final class MidiCenter: ObservableObject {
         }
     }
 
+    private static let MIDI_IN_VOICE_ID_BASE = 1_000_000 // clear of touch ids, like the web build
     private var noteIds: [String: Int] = [:]
-    private var nextInVoiceId = 1_000_000
+    private var nextInVoiceId = MidiCenter.MIDI_IN_VOICE_ID_BASE
 
     private func handleMessage(_ statusByte: UInt8, _ d1: UInt8, _ d2: UInt8) {
         guard store.state.midi.inEnabled, let sink = inSink else { return }

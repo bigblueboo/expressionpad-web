@@ -317,18 +317,6 @@ public final class Store: ObservableObject {
         scheduleSave()
     }
 
-    /// Set many paths at once, emitting a single notification per path.
-    public func patch(_ apply: (Patcher) -> Void) {
-        apply(Patcher(store: self))
-    }
-
-    public struct Patcher {
-        let store: Store
-        public func set<T: Equatable>(_ keyPath: WritableKeyPath<AppState, T>, _ value: T) {
-            store.set(keyPath, value)
-        }
-    }
-
     @discardableResult
     public func subscribe(_ fn: @escaping Listener) -> () -> Void {
         let id = UUID()
@@ -359,13 +347,13 @@ func deepMerge(_ target: inout [String: Any], _ src: Any) {
         if var tDict = t as? [String: Any], v is [String: Any] {
             deepMerge(&tDict, v)
             target[k] = tDict
-        } else if type(sameJsonKind: t, as: v) {
+        } else if jsonKindMatches(t, v) {
             target[k] = v
         }
     }
 }
 
-private func type(sameJsonKind t: Any, as v: Any) -> Bool {
+private func jsonKindMatches(_ t: Any, _ v: Any) -> Bool {
     switch (t, v) {
     case (is String, is String): return true
     case (is NSNumber, is NSNumber):

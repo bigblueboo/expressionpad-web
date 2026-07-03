@@ -81,6 +81,7 @@ public struct Biquad {
 
 /// tanh(kx)/tanh(k) soft clip, 2×-oversampled with a 17-tap half-band FIR
 /// (the web shaper's `oversample: '2x'`). Dry/wet crossfade by the ON toggle.
+/// Call `update` once per render block, then `process` per sample.
 public struct Distortion {
     /// Equiripple half-band; odd taps (except center) are zero.
     static let taps: [Float] = [
@@ -89,11 +90,22 @@ public struct Distortion {
     ]
     var upState = [Float](repeating: 0, count: Distortion.taps.count)
     var downState = [Float](repeating: 0, count: Distortion.taps.count)
-    public var k: Float = 1 + 0.3 * 30
-    public var wet = OnePole(0)
-    public var dry = OnePole(1)
+    var k: Float = 1 + 0.3 * 30
+    var wet = OnePole(0)
+    var dry = OnePole(1)
+    var wetGain: Float = 0
+    var dryGain: Float = 1
 
     public init() {}
+
+    public mutating func update(dt: Float, amt: Float, on: Bool) {
+        k = 1 + clamp(amt, 0, 1) * 30
+        let alpha = smoothingAlpha(dt: dt, tau: 0.02)
+        wet.target = on ? 1 : 0
+        dry.target = on ? 0 : 1
+        wetGain = wet.step(alpha)
+        dryGain = dry.step(alpha)
+    }
 
     static func fir(_ x: Float, _ state: inout [Float]) -> Float {
         for i in stride(from: state.count - 1, to: 0, by: -1) { state[i] = state[i - 1] }
@@ -107,7 +119,7 @@ public struct Distortion {
         tanh(k * x) / tanh(k)
     }
 
-    public mutating func process(_ x: Float, wetGain: Float, dryGain: Float) -> Float {
+    public mutating func process(_ x: Float) -> Float {
         // Upsample 2× (zero-stuff → half-band, ×2 gain), shape, filter, decimate.
         let u0 = Distortion.fir(x * 2, &upState)
         let u1 = Distortion.fir(0, &upState)
@@ -123,23 +135,34 @@ public struct Distortion {
 
 /// Feedback delay with smoothly modulated (interpolated) delay time, like
 /// Web Audio's DelayNode. Dry passes at unity; wet = mix when ON.
+/// Call `update` once per render block, then `process` per sample.
 public struct FeedbackDelay {
     var buffer: [Float]
     var writeIdx = 0
     let sampleRate: Float
-    public var timeSm: OnePole
-    public var fdbkSm: OnePole
-    public var wetSm: OnePole
+    var timeSm = OnePole(0.34)
+    var fdbkSm = OnePole(0.35)
+    var wetSm = OnePole(0)
+    var time: Float = 0.34
+    var fdbk: Float = 0.35
+    var wet: Float = 0
 
     public init(maxSeconds: Float, sampleRate: Float) {
         self.sampleRate = sampleRate
         buffer = [Float](repeating: 0, count: Int(maxSeconds * sampleRate) + 2)
-        timeSm = OnePole(0.34)
-        fdbkSm = OnePole(0.35)
-        wetSm = OnePole(0)
     }
 
-    public mutating func process(_ x: Float, time: Float, fdbk: Float, wet: Float) -> Float {
+    public mutating func update(dt: Float, time: Float, fdbk: Float, wet: Float) {
+        // The web build's taus: 0.05 on time, 0.02 on gains.
+        timeSm.target = clamp(time, 0.01, 2)
+        fdbkSm.target = clamp(fdbk, 0, 0.9)
+        wetSm.target = wet
+        self.time = timeSm.step(smoothingAlpha(dt: dt, tau: 0.05))
+        self.fdbk = fdbkSm.step(smoothingAlpha(dt: dt, tau: 0.02))
+        self.wet = wetSm.step(smoothingAlpha(dt: dt, tau: 0.02))
+    }
+
+    public mutating func process(_ x: Float) -> Float {
         let n = buffer.count
         let delaySamples = min(Float(n - 2), max(1, time * sampleRate))
         var readPos = Float(writeIdx) - delaySamples
@@ -161,6 +184,7 @@ public struct FeedbackDelay {
 /// damping. Replaces the web build's generated-noise convolver: same diffuse
 /// exponential tail, but the decay time tracks the FDBK knob continuously
 /// (T60 = lerp(0.4, 5, fdbk) — the web IR's length mapping).
+/// Call `update` once per render block, then `process` per sample.
 public struct FDNReverb {
     static let baseLengths = [1129, 1447, 1801, 2099, 2393, 2683, 3079, 3469] // @48k, mutually prime
     var lines: [[Float]]
@@ -169,8 +193,9 @@ public struct FDNReverb {
     var lengths = [Int](repeating: 0, count: 8)
     var gains = [Float](repeating: 0, count: 8)
     let sampleRate: Float
-    public var wetSm = OnePole(0)
+    var wetSm = OnePole(0)
     var t60: Float = -1
+    public private(set) var wetGain: Float = 0
 
     public init(sampleRate: Float) {
         self.sampleRate = sampleRate
@@ -182,8 +207,14 @@ public struct FDNReverb {
         setDecay(seconds: 2.7)
     }
 
+    public mutating func update(dt: Float, fdbk: Float, wet: Float) {
+        setDecay(seconds: lerp(0.4, 5, clamp(fdbk, 0, 1)))
+        wetSm.target = wet
+        wetGain = wetSm.step(smoothingAlpha(dt: dt, tau: 0.02))
+    }
+
     /// Per-line feedback gain for a target T60.
-    public mutating func setDecay(seconds: Float) {
+    mutating func setDecay(seconds: Float) {
         if seconds == t60 { return }
         t60 = seconds
         for i in 0..<8 {

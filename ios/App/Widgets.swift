@@ -240,7 +240,7 @@ struct Widget<Content: View>: View {
 // ----------------------------------------------------------------- group ---
 
 /// A titled group box, like the original's PADMATRIX / REVERB frames.
-struct GroupBox<Content: View>: View {
+struct PanelGroup<Content: View>: View {
     var title: String
     @ViewBuilder var content: Content
 
