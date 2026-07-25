@@ -18,6 +18,8 @@ export class PadView {
   private ctx2d: CanvasRenderingContext2D | null
   private layout: Layout
   private field: BrightnessField
+  private accessibleKeys: HTMLDivElement
+  private accessibilityNoteId = 2_000_000
   private lastFrame = performance.now()
   private raf = 0
   private dpr = 1
@@ -26,7 +28,13 @@ export class PadView {
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'pad-canvas'
     this.canvas.style.touchAction = 'none'
+    this.canvas.setAttribute('aria-hidden', 'true')
     container.appendChild(this.canvas)
+    this.accessibleKeys = document.createElement('div')
+    this.accessibleKeys.className = 'pad-accessible-keys'
+    this.accessibleKeys.setAttribute('role', 'group')
+    this.accessibleKeys.setAttribute('aria-label', 'Playable note grid')
+    container.appendChild(this.accessibleKeys)
     this.ctx2d = this.canvas.getContext('2d')
     this.layout = this.computeLayout(1, 1)
     this.field = new BrightnessField(this.layout.keys)
@@ -79,6 +87,26 @@ export class PadView {
       this.canvas.height / this.dpr,
     )
     this.field = new BrightnessField(this.layout.keys)
+    this.rebuildAccessibility()
+  }
+
+  private rebuildAccessibility(): void {
+    this.accessibleKeys.replaceChildren()
+    for (const key of this.layout.keys) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = noteName(key.note, true)
+      button.setAttribute(
+        'aria-label',
+        `${noteName(key.note, true)}, row ${key.row + 1}, column ${key.col + 1}`,
+      )
+      button.addEventListener('click', () => {
+        const id = this.accessibilityNoteId++
+        this.tracker.down(id, key.cx, key.cy)
+        window.setTimeout(() => this.tracker.up(id), 160)
+      })
+      this.accessibleKeys.appendChild(button)
+    }
   }
 
   resize(): void {

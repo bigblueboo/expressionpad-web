@@ -14,6 +14,8 @@ private let TABS: [(id: UiTab, label: String)] = [
 ]
 
 struct ControlsView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ObservedObject var store: Store
     let audio: AudioEngine
     @ObservedObject var midi: MidiCenter
@@ -31,10 +33,14 @@ struct ControlsView: View {
 
     private var topBar: some View {
         HStack(spacing: 4) {
-            Text("expressionPad")
-                .font(Theme.fontMedium(15))
-                .foregroundColor(Theme.accent)
-                .padding(.trailing, 10)
+            if horizontalSizeClass != .compact {
+                Text("expressionPad")
+                    .font(Theme.fontMedium(15))
+                    .foregroundColor(Theme.accent)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.trailing, 10)
+            }
             ForEach(TABS, id: \.id) { tab in
                 tabButton(tab.id, tab.label)
             }
@@ -90,7 +96,7 @@ struct ControlsView: View {
                 .padding(.init(top: 6, leading: 8, bottom: 8, trailing: 8))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxHeight: 320)
+        .frame(maxHeight: verticalSizeClass == .compact ? 160 : 320)
         .background(Theme.panelBg)
         .overlay(alignment: .bottom) { Theme.line.frame(height: 1) }
     }
@@ -226,15 +232,16 @@ private struct SmplrPage: View {
                     store.set(\.sampler.preset, USER_PRESET)
                     status = "Loaded: \(name)"
                 } catch {
-                    status = "Could not decode \(url.lastPathComponent)."
+                    status = "Error: \(error.localizedDescription)"
                 }
-            case .failure:
-                break
+            case let .failure(error):
+                status = "Error: \(error.localizedDescription)"
             }
         }
     }
 
     private var statusText: String {
+        if status.hasPrefix("Error:") { return status }
         if !status.isEmpty && store.state.sampler.preset == USER_PRESET { return status }
         if store.state.sampler.preset == USER_PRESET {
             return audio.sampleRegistry.userSampleName.map { "Loaded: \($0)" }

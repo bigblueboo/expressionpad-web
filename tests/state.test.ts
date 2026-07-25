@@ -59,6 +59,7 @@ describe('Store', () => {
   it('throws on bad paths', () => {
     const store = new Store()
     expect(() => store.get('nope.nope')).toThrow()
+    expect(() => store.set('pad.nope', 1)).toThrow()
   })
 
   it('persists to localStorage and loads back', async () => {
@@ -89,6 +90,52 @@ describe('Store', () => {
     const loaded = Store.load('typed-key')
     expect(loaded.state.pad.rows).toBe(4)
   })
+
+  it('sanitizes invalid ranges and named values at mutation boundaries', () => {
+    const store = new Store()
+    store.set('pad.rows', 0)
+    store.set('pad.cols', Number.NaN)
+    store.set('pad.layout', 'garbage')
+    store.set('midi.bendRange', 0)
+    store.set('ui.tab', 'garbage')
+    expect(store.state.pad.rows).toBe(1)
+    expect(store.state.pad.cols).toBe(12)
+    expect(store.state.pad.layout).toBe('square')
+    expect(store.state.midi.bendRange).toBe(1)
+    expect(store.state.ui.tab).toBe('pad')
+  })
+
+  it('ignores mutation-time type mismatches without corrupting state', () => {
+    const store = new Store()
+    const notify = vi.fn()
+    store.subscribe(notify)
+    store.set('pad.frets', 'yes')
+    store.set('synth.env', 42)
+    expect(store.state.pad.frets).toBe(false)
+    expect(store.state.synth.env).toEqual(defaultState().synth.env)
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes range-invalid persisted values per leaf', () => {
+    localStorage.setItem('range-key', JSON.stringify({
+      pad: { rows: -4, cols: 200, rowTuning: 'garbage' },
+      midi: { bendRange: 0 },
+      appearance: { brightness: 20 },
+    }))
+    const loaded = Store.load('range-key')
+    expect(loaded.state.pad.rows).toBe(1)
+    expect(loaded.state.pad.cols).toBe(24)
+    expect(loaded.state.pad.rowTuning).toBe('Fourths [+5]')
+    expect(loaded.state.midi.bendRange).toBe(1)
+    expect(loaded.state.appearance.brightness).toBe(1)
+  })
+
+  it('flushes pending persistence immediately', () => {
+    const store = new Store(defaultState(), 'flush-key')
+    store.set('pad.rows', 7)
+    store.flushSave()
+    expect(Store.load('flush-key').state.pad.rows).toBe(7)
+  })
 })
 
 describe('presets', () => {
@@ -99,6 +146,14 @@ describe('presets', () => {
     ]) {
       expect(PRESET_NAMES).toContain(name)
     }
+  })
+
+  it('default state matches the selected Super Sine patch', () => {
+    const state = defaultState()
+    expect(state.synth.gen1).toEqual(SYNTH_PRESETS['Super Sine'].gen1)
+    expect(state.synth.gen2).toEqual(SYNTH_PRESETS['Super Sine'].gen2)
+    expect(state.synth.env).toEqual(SYNTH_PRESETS['Super Sine'].env)
+    expect(state.synth.filter).toEqual(SYNTH_PRESETS['Super Sine'].filter)
   })
 
   it('all preset values are within legal ranges', () => {

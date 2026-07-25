@@ -2,6 +2,7 @@
 
 export class MockParam {
   value = 0
+  held = false
   constructor(v = 0) {
     this.value = v
   }
@@ -15,6 +16,9 @@ export class MockParam {
     this.value = v
   }
   cancelScheduledValues(): void {}
+  cancelAndHoldAtTime(): void {
+    this.held = true
+  }
 }
 
 export class MockNode {
@@ -22,6 +26,7 @@ export class MockNode {
   onended: (() => void) | null = null
   started = false
   stopped = false
+  stopTime: number | null = null
   connect(n: MockNode): MockNode {
     this.connections.push(n)
     return n
@@ -30,8 +35,12 @@ export class MockNode {
   start(): void {
     this.started = true
   }
-  stop(): void {
+  stop(when = 0): void {
     this.stopped = true
+    this.stopTime = when
+    if (when <= 0) this.onended?.()
+  }
+  finish(): void {
     this.onended?.()
   }
 }
@@ -95,7 +104,8 @@ export class MockAudioContext {
   createOscillator() {
     return this.make('osc', Object.assign(new MockNode(), {
       frequency: new MockParam(440), detune: new MockParam(0),
-      setPeriodicWave(): void {},
+      wave: null as unknown,
+      setPeriodicWave(wave: unknown): void { this.wave = wave },
     }))
   }
   createPeriodicWave(real: Float32Array, imag: Float32Array) {

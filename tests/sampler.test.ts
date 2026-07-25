@@ -110,6 +110,18 @@ describe('SamplerEngine', () => {
     expect(lastSource(t.ctx).detune.value).toBe(1200)
   })
 
+  it('rejects empty or oversized user sample files', async () => {
+    await expect(t.sampler.decodeFile({
+      name: 'empty.wav',
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    })).rejects.toThrow()
+    await expect(t.sampler.decodeFile({
+      name: 'huge.wav',
+      size: SamplerEngine.maxFileBytes + 1,
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+    })).rejects.toThrow()
+  })
+
   it('pressure brightens and swells the voice', () => {
     t.sampler.noteOn(1, 60, 0.8)
     const filterFreqBefore = lastFilter(t.ctx).frequency.value

@@ -41,6 +41,8 @@ export function buildControls(
 
   const tabsWrap = document.createElement('nav')
   tabsWrap.className = 'tabs'
+  tabsWrap.setAttribute('aria-label', 'Instrument controls')
+  tabsWrap.setAttribute('role', 'tablist')
   bar.appendChild(tabsWrap)
 
   const tabButtons = new Map<string, HTMLButtonElement>()
@@ -48,6 +50,9 @@ export function buildControls(
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'tab'
+    btn.id = `tab-${tab.id}`
+    btn.setAttribute('role', 'tab')
+    btn.setAttribute('aria-controls', `page-${tab.id}`)
     btn.dataset.tab = tab.id
     btn.textContent = tab.label
     btn.addEventListener('click', () => {
@@ -57,6 +62,17 @@ export function buildControls(
         store.patch({ 'ui.tab': tab.id, 'ui.panelOpen': true })
       }
     })
+    btn.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+      event.preventDefault()
+      const index = TABS.findIndex((candidate) => candidate.id === tab.id)
+      const next = event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? TABS.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length
+      tabButtons.get(TABS[next].id)?.focus()
+    })
     tabsWrap.appendChild(btn)
     tabButtons.set(tab.id, btn)
   }
@@ -65,12 +81,14 @@ export function buildControls(
   chevron.type = 'button'
   chevron.className = 'chevron'
   chevron.setAttribute('aria-label', 'toggle control panel')
+  chevron.setAttribute('aria-controls', 'control-panel')
   chevron.textContent = '«'
   chevron.addEventListener('click', () => store.set('ui.panelOpen', !store.state.ui.panelOpen))
   bar.appendChild(chevron)
 
   const panel = document.createElement('section')
   panel.className = 'panel'
+  panel.id = 'control-panel'
   root.appendChild(panel)
 
   const pages: Record<string, HTMLElement> = {
@@ -83,6 +101,9 @@ export function buildControls(
   for (const [id, page] of Object.entries(pages)) {
     page.classList.add('page')
     page.dataset.page = id
+    page.id = `page-${id}`
+    page.setAttribute('role', 'tabpanel')
+    page.setAttribute('aria-labelledby', `tab-${id}`)
     panel.appendChild(page)
   }
 
@@ -90,11 +111,18 @@ export function buildControls(
     const { tab, panelOpen } = store.state.ui
     for (const [id, btn] of tabButtons) {
       btn.classList.toggle('active', id === tab && panelOpen)
+      btn.setAttribute('aria-selected', String(id === tab))
+      btn.tabIndex = id === tab ? 0 : -1
     }
     for (const [id, page] of Object.entries(pages)) {
-      page.style.display = id === tab ? '' : 'none'
+      const inactive = id !== tab
+      page.hidden = inactive
+      // Keep an explicit fallback for older/embedded browsers whose author
+      // styles may accidentally override the HTML `hidden` rule.
+      page.style.display = inactive ? 'none' : ''
     }
     panel.classList.toggle('collapsed', !panelOpen)
+    panel.setAttribute('aria-hidden', String(!panelOpen))
     chevron.classList.toggle('collapsed', !panelOpen)
     chevron.setAttribute('aria-expanded', String(panelOpen))
   }
@@ -132,6 +160,8 @@ function smplrPage(store: Store, sampler: SamplerEngine, router: VoiceSink): HTM
 
   const status = document.createElement('div')
   status.className = 'midi-status widget'
+  status.setAttribute('role', 'status')
+  status.setAttribute('aria-live', 'polite')
   const syncStatus = () => {
     if (store.state.sampler.preset === USER_PRESET) {
       status.textContent = sampler.userSampleName
@@ -157,8 +187,10 @@ function smplrPage(store: Store, sampler: SamplerEngine, router: VoiceSink): HTM
       await sampler.decodeFile(f)
       store.set('sampler.preset', USER_PRESET)
       syncStatus()
-    } catch {
-      status.textContent = `Could not decode ${f.name}.`
+    } catch (error) {
+      status.textContent = error instanceof Error
+        ? error.message
+        : `Could not decode ${f.name}.`
     }
   })
 
@@ -308,6 +340,9 @@ function padPage(store: Store): HTMLElement {
 function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement {
   const status = document.createElement('div')
   status.className = 'midi-status widget'
+  status.setAttribute('role', 'status')
+  status.setAttribute('aria-live', 'polite')
+  status.textContent = 'MIDI off — enable to connect.'
 
   const outSel = select(store, 'midi.outputId', 'output', [{ value: '', text: '—' }])
   const inSel = select(store, 'midi.inputId', 'input', [{ value: '', text: '—' }])
@@ -332,21 +367,28 @@ function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement
     }
   }
 
+  let initializing = false
+  let initialized = false
   const initMidi = async () => {
+    if (initializing || initialized) return
+    initializing = true
     if (!midi.supported) {
       status.textContent = 'Web MIDI is not supported in this browser (iOS Safari: try Web MIDI Browser).'
+      initializing = false
       return
     }
     const ok = await midi.init()
+    initializing = false
+    initialized = ok
     status.textContent = ok
       ? `MIDI ready — latency ${engine.latencyMs}ms`
       : 'MIDI access denied.'
     if (ok) {
       refreshPorts()
-      midi.onDevicesChanged = refreshPorts
+      midi.onDevicesChanged(refreshPorts)
     }
   }
-  void initMidi()
+  const enableMidi = button('enable midi', () => void initMidi())
 
   return row(
     group(
@@ -364,6 +406,7 @@ function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement
     group(
       'SYSTEM',
       toggle(store, 'midi.localSound', 'synth'),
+      enableMidi,
       status,
     ),
   )

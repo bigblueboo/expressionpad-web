@@ -70,7 +70,11 @@ struct ExpressionPadApp: App {
                 .persistentSystemOverlays(.hidden)
                 .onChange(of: scenePhase) { _, phase in
                     // Silence everything if the app is hidden mid-performance.
-                    if phase == .background { router.allOff() }
+                    if phase == .background {
+                        router.allOff()
+                        audio.stop()
+                        store.flushSave()
+                    }
                     if phase == .active { audio.start() }
                 }
         }

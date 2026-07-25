@@ -50,6 +50,7 @@ export function knob(store: Store, path: string, label: string, opts: KnobOpts =
     dial.style.setProperty('--sweep', `${t * 270}deg`)
     readout.textContent = fmt(v)
     node.setAttribute('aria-valuenow', String(Math.round(v * 1000) / 1000))
+    node.setAttribute('aria-valuetext', fmt(v))
   }
   draw(initial)
   store.subscribe((_s, p) => {
@@ -76,8 +77,10 @@ export function knob(store: Store, path: string, label: string, opts: KnobOpts =
   node.addEventListener('keydown', (e) => {
     const step = (max - min) / 20
     if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+      e.preventDefault()
       store.set(path, clamp(store.get<number>(path) + step, min, max))
     } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+      e.preventDefault()
       store.set(path, clamp(store.get<number>(path) - step, min, max))
     }
   })

@@ -17,7 +17,7 @@
                BlueprintIdentifier = "EP00000500000005"
                BuildableName = "ExpressionPad.app"
                BlueprintName = "ExpressionPad"
-               ReferencedContainer = "container:ExpressionPad.xcodeproj">
+               ReferencedContainer = "container:xpad.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,7 +46,7 @@
             BlueprintIdentifier = "EP00000500000005"
             BuildableName = "ExpressionPad.app"
             BlueprintName = "ExpressionPad"
-            ReferencedContainer = "container:ExpressionPad.xcodeproj">
+            ReferencedContainer = "container:xpad.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -63,7 +63,7 @@
             BlueprintIdentifier = "EP00000500000005"
             BuildableName = "ExpressionPad.app"
             BlueprintName = "ExpressionPad"
-            ReferencedContainer = "container:ExpressionPad.xcodeproj">
+            ReferencedContainer = "container:xpad.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

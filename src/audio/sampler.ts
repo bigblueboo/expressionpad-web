@@ -27,11 +27,26 @@ interface SVoice {
   vca: GainNode
 }
 
+const MAX_LIVE_SAMPLE_VOICES = 16
+
+function holdAutomation(param: AudioParam, time: number): void {
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    param.cancelAndHoldAtTime(time)
+  } else {
+    const value = param.value
+    param.cancelScheduledValues(time)
+    param.setValueAtTime(value, time)
+  }
+}
+
 export class SamplerEngine implements VoiceSink {
+  static readonly maxFileBytes = 50 * 1024 * 1024
+  static readonly maxDurationSeconds = 30
   private cache = new Map<string, SampleEntry>()
   private user: { buffer: AudioBuffer; name: string } | null = null
   private out: GainNode | null = null
   private voices = new Map<number, SVoice>()
+  private releaseTails = new Set<SVoice>()
 
   constructor(private store: Store, private host: SynthEngine) {
     store.subscribe((_s, path) => {
@@ -47,6 +62,10 @@ export class SamplerEngine implements VoiceSink {
     return this.voices.size
   }
 
+  get liveVoiceCount(): number {
+    return this.voices.size + this.releaseTails.size
+  }
+
   get userSampleName(): string | null {
     return this.user?.name ?? null
   }
@@ -57,10 +76,23 @@ export class SamplerEngine implements VoiceSink {
   }
 
   /** Decode an audio file into the user sample slot. */
-  async decodeFile(file: { name: string; arrayBuffer(): Promise<ArrayBuffer> }): Promise<void> {
+  async decodeFile(file: { name: string; size?: number; arrayBuffer(): Promise<ArrayBuffer> }): Promise<void> {
+    if (file.size !== undefined && file.size > SamplerEngine.maxFileBytes) {
+      throw new Error('Sample files must be 50 MB or smaller.')
+    }
     this.host.ensure() // the file-picker change event is a user gesture
     const bytes = await file.arrayBuffer()
+    if (bytes.byteLength === 0 || bytes.byteLength > SamplerEngine.maxFileBytes) {
+      throw new Error('Sample file is empty or too large.')
+    }
     const buffer = await this.host.ctx!.decodeAudioData(bytes)
+    if (
+      buffer.length === 0
+      || !Number.isFinite(buffer.duration)
+      || buffer.duration > SamplerEngine.maxDurationSeconds
+    ) {
+      throw new Error('Samples must contain audio and be 30 seconds or shorter.')
+    }
     this.setUserSample(buffer, file.name)
   }
 
@@ -104,6 +136,7 @@ export class SamplerEngine implements VoiceSink {
   }
 
   private startVoice(id: number, pitch: number, vel: number): void {
+    this.reclaimVoices()
     const ctx = this.host.ctx!
     const entry = this.currentSample()
     if (!entry) return
@@ -135,6 +168,7 @@ export class SamplerEngine implements VoiceSink {
     const voice: SVoice = { pitch, vel, root: entry.root, src, filter, vca }
     src.onended = () => {
       if (this.voices.get(id) === voice) this.voices.delete(id)
+      this.releaseTails.delete(voice)
       try {
         src.disconnect()
         filter.disconnect()
@@ -153,10 +187,7 @@ export class SamplerEngine implements VoiceSink {
     const retrig = this.store.state.sampler.retrig
     if (retrig && Math.round(pitch) !== Math.round(v.pitch)) {
       // Restart at the new semitone, like a harp glissando.
-      v.vca.gain.cancelScheduledValues(t)
-      v.vca.gain.setTargetAtTime(0, t, 0.008)
-      v.src.stop(t + 0.05)
-      this.voices.delete(id)
+      this.releaseVoice(id, v, 0.025)
       this.startVoice(id, Math.round(pitch), v.vel)
       return
     }
@@ -178,15 +209,54 @@ export class SamplerEngine implements VoiceSink {
   noteOff(id: number): void {
     const v = this.voices.get(id)
     if (!v || !this.host.ctx) return
-    const t = this.host.ctx.currentTime
     const r = Math.max(0.02, this.store.state.sampler.release)
-    v.vca.gain.cancelScheduledValues(t)
-    v.vca.gain.setTargetAtTime(0, t, r / 3)
-    v.src.stop(t + r * 2 + 0.1)
-    this.voices.delete(id)
+    this.releaseVoice(id, v, r)
   }
 
   allOff(): void {
-    for (const id of [...this.voices.keys()]) this.noteOff(id)
+    for (const voice of this.voices.values()) this.hardStopVoice(voice)
+    for (const voice of this.releaseTails) this.hardStopVoice(voice)
+    this.voices.clear()
+    this.releaseTails.clear()
+  }
+
+  private releaseVoice(id: number, voice: SVoice, release: number): void {
+    const t = this.host.ctx!.currentTime
+    holdAutomation(voice.vca.gain, t)
+    voice.vca.gain.setTargetAtTime(0, t, release / 3)
+    this.voices.delete(id)
+    this.releaseTails.add(voice)
+    voice.src.stop(t + release * 2 + 0.1)
+  }
+
+  private reclaimVoices(): void {
+    while (this.voices.size + this.releaseTails.size >= MAX_LIVE_SAMPLE_VOICES) {
+      const oldestTail = this.releaseTails.values().next()
+      if (!oldestTail.done) {
+        this.hardStopVoice(oldestTail.value)
+        continue
+      }
+      const oldest = this.voices.entries().next()
+      if (oldest.done) break
+      this.hardStopVoice(oldest.value[1])
+    }
+  }
+
+  private hardStopVoice(voice: SVoice): void {
+    for (const [id, active] of this.voices) {
+      if (active === voice) this.voices.delete(id)
+    }
+    this.releaseTails.delete(voice)
+    const t = this.host.ctx?.currentTime ?? 0
+    holdAutomation(voice.vca.gain, t)
+    voice.vca.gain.setValueAtTime(0, t)
+    try { voice.src.stop(t) } catch { /* already ended */ }
+    try {
+      voice.src.disconnect()
+      voice.filter.disconnect()
+      voice.vca.disconnect()
+    } catch {
+      // already torn down
+    }
   }
 }

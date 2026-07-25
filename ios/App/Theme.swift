@@ -17,11 +17,11 @@ enum Theme {
     static let widgetBg = Color(hex: 0x0c1722)
 
     static func font(_ size: CGFloat) -> Font {
-        .custom("AvenirNextCondensed-Regular", size: size)
+        .custom("AvenirNextCondensed-Regular", size: size, relativeTo: .body)
     }
 
     static func fontMedium(_ size: CGFloat) -> Font {
-        .custom("AvenirNextCondensed-Medium", size: size)
+        .custom("AvenirNextCondensed-Medium", size: size, relativeTo: .body)
     }
 }
 

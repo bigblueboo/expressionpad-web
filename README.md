@@ -1,11 +1,12 @@
 # expressionPad
 
-A continuous, multi-touch music controller — resurrected for the web.
+A continuous, multi-touch music controller for the web and native iOS.
 
 The original expressionPad (iOS, 2017–2020, built on AudioKit) was lost with
-its source. This is a ground-up recreation with web technology: Web Audio for
-the synth, Pointer Events for low-latency multi-touch, Web MIDI for
-controlling external instruments.
+its source. This is a ground-up recreation: the web build uses Web Audio and
+Web MIDI; the iOS build uses a real-time Swift DSP kernel, AVAudioEngine, and
+CoreMIDI. Both share the same interaction model, presets, layouts, and state
+shape.
 
 ## Run it
 
@@ -18,7 +19,16 @@ node scripts/shots.mjs   # device-emulated screenshots (needs `npm run preview` 
 ```
 
 Serve over HTTPS (or localhost) for Web MIDI. On iOS Safari Web MIDI is not
-available — the internal synth still works.
+available — the internal synth still works. MIDI permission is requested only
+after choosing **Enable MIDI** in the MIDI tab.
+
+For the native app, open `ios/ExpressionPad.xcodeproj` in Xcode and run the
+`ExpressionPad` scheme. Its framework tests can also be run directly:
+
+```sh
+cd ios/Core
+./test.sh
+```
 
 ## What it does
 
@@ -49,9 +59,10 @@ available — the internal synth still works.
   Room Drill.
 - **Sampler**: six built-in instruments rendered from pure math at load
   time (English Horn, Choir, Strings, E-Piano, Marimba, Pluck — with
-  click-free loop points) plus user sample loading. RETRIG gives harp-gliss
-  slides; PANIC kills everything. Synth and sampler swap via the VOICE
-  switch, like the original.
+  click-free loop points) plus user sample loading. Imports are limited to
+  50 MB and 30 seconds. RETRIG gives harp-gliss slides; PANIC kills
+  voices and effect history. Synth and sampler swap via the VOICE switch,
+  like the original.
 - **FX**: reverb (generated impulse), delay, distortion, fatten (detuned
   unison) — the original's four inserts, shared by synth and sampler.
 - **MIDI**: MPE-style output (per-touch channel, per-note pitch bend,
@@ -61,8 +72,10 @@ available — the internal synth still works.
   to collapse everything and play full-screen. Tap the active tab to toggle.
 - **URL config**: share setups, e.g. `?layout=hex&scheme=Rainbow&rows=6&cols=14`.
 
-State persists to localStorage. The pad surface is a single canvas renderer;
-audio voices are built per-touch with `latencyHint: 'interactive'`.
+State persists to localStorage on the web and UserDefaults on iOS. Persisted
+and URL-provided values are validated before reaching layout, MIDI, or audio
+code. The web pad is a single canvas renderer; audio voices are built
+per-touch with `latencyHint: 'interactive'`.
 
 ## Project layout
 
@@ -71,6 +84,8 @@ src/core    notes, scales, layout geometry, state store, presets
 src/audio   pure DSP math, synth engine, voice routing
 src/midi    Web MIDI out (MPE) + in
 src/ui      canvas pad, touch tracking, widgets, control panel, color schemes
-tests       vitest suite (134 tests)
+ios/App     SwiftUI/UIKit app, AVAudioEngine bridge, CoreMIDI
+ios/Core    allocation-free Swift DSP kernel and cross-platform core logic
+tests       Vitest web regression suite
 reference   screenshots of the original app + rendered checks of this build
 ```

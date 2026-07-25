@@ -5,7 +5,7 @@
  * Behavior, matching the original app:
  * - Each touch is an independent voice (continuous multi-touch).
  * - slide = 0: dragging across keys retriggers discrete notes.
- * - slide > 0: pitch follows the finger continuously within the origin row;
+ * - slide > 0: pitch follows the finger continuously across columns and rows;
  *   FRETS snaps the slid pitch to semitones.
  * - TCH VEL: velocity from vertical position within the key at onset.
  * - AFTERTOUCH: vertical movement after onset becomes pressure 0..1.
@@ -18,7 +18,7 @@ import { clampMidi } from '../core/notes'
 export interface ActiveTouch {
   id: number
   key: KeyShape
-  originRow: number
+  currentRow: number
   startY: number
   pitch: number
   pressure: number
@@ -46,7 +46,7 @@ export class TouchTracker {
     if (this.active.has(id)) this.up(id)
     const vel = pad.touchVel ? velocityFromKey(key, y) : 0.8
     const touch: ActiveTouch = {
-      id, key, originRow: key.row, startY: y, pitch: key.note, pressure: 0, x, y,
+      id, key, currentRow: key.row, startY: y, pitch: key.note, pressure: 0, x, y,
     }
     this.active.set(id, touch)
     this.sink.noteOn(id, clampMidi(key.note), vel)
@@ -63,18 +63,19 @@ export class TouchTracker {
     touch.y = y
 
     if (pad.slide > 0) {
-      let pitch = layout.pitchAt(x, touch.originRow)
+      // Adopt the row beneath the finger before calculating pitch. Keeping the
+      // same touch id makes row changes portamento glides rather than retriggers.
+      const over = layout.hitTest(x, y)
+      if (over) {
+        touch.currentRow = over.row
+        touch.key = over
+      }
+      let pitch = layout.pitchAt(x, touch.currentRow)
       if (pad.frets) pitch = Math.round(pitch)
       pitch = clampMidi(pitch)
       if (pitch !== touch.pitch) {
         touch.pitch = pitch
         this.sink.glide(id, pitch)
-      }
-      // Highlight follows the nearest key in the origin row.
-      const over = layout.hitTest(x, y)
-      if (over && over.row === touch.originRow && over.id !== touch.key.id) {
-        touch.key = over
-        this.onTrigger(over)
       }
     } else {
       const over = layout.hitTest(x, y)
@@ -82,7 +83,7 @@ export class TouchTracker {
         this.sink.noteOff(id)
         const vel = pad.touchVel ? velocityFromKey(over, y) : 0.8
         touch.key = over
-        touch.originRow = over.row
+        touch.currentRow = over.row
         touch.startY = y
         touch.pitch = over.note
         touch.pressure = 0

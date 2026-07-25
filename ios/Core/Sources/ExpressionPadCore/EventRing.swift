@@ -51,6 +51,27 @@ public struct SampleRef {
     public static let none = SampleRef(data: nil, count: 0, root: 60, loopStart: -1, loopEnd: -1)
 }
 
+/// A safely published wavetable slab. The producer owns `free` slots, marks
+/// them `queued` after construction, and the audio thread marks the selected
+/// slot `current`. A slot is never rewritten until the audio thread retires it.
+public struct WavetablePublication: @unchecked Sendable {
+    public let table: UnsafePointer<Float>
+    let state: UnsafeMutablePointer<Atomic<Int>>
+
+    init(table: UnsafePointer<Float>, state: UnsafeMutablePointer<Atomic<Int>>) {
+        self.table = table
+        self.state = state
+    }
+
+    func markCurrent() {
+        state.pointee.store(2, ordering: .releasing)
+    }
+
+    func retire() {
+        state.pointee.store(0, ordering: .releasing)
+    }
+}
+
 public enum KernelEvent {
     case noteOn(dest: KernelDest, id: Int32, pitch: Float, vel: Float)
     case glide(dest: KernelDest, id: Int32, pitch: Float)
@@ -58,8 +79,8 @@ public enum KernelEvent {
     case noteOff(dest: KernelDest, id: Int32)
     case allOff(dest: KernelDest)
     case param(ParamID, Float)
-    /// Pointer to Wavetable.totalSize floats (all mip levels) for a generator.
-    case wavetable(gen: Int32, table: UnsafePointer<Float>)
+    /// Safely-owned Wavetable.totalSize-float slab for a generator.
+    case wavetable(gen: Int32, publication: WavetablePublication)
     /// Switch the sample the *next* sampler voices will play.
     case sample(SampleRef)
 }
@@ -70,6 +91,11 @@ public final class EventRing: @unchecked Sendable {
     private let buffer: UnsafeMutablePointer<KernelEvent>
     private let head = Atomic<Int>(0) // consumer position
     private let tail = Atomic<Int>(0) // producer position
+    // Terminal events must never disappear behind replaceable control traffic.
+    // If the ring is full, the producer raises one of these flags and the
+    // audio thread releases the destination before consuming ordinary events.
+    private let emergencySynthOff = Atomic<Bool>(false)
+    private let emergencySamplerOff = Atomic<Bool>(false)
     /// Events dropped because the ring was full (diagnostic, producer-side).
     public private(set) var dropped = 0
 
@@ -93,6 +119,16 @@ public final class EventRing: @unchecked Sendable {
         let h = head.load(ordering: .acquiring)
         if t - h >= capacity {
             dropped += 1
+            switch event {
+            case let .noteOff(dest, _), let .allOff(dest):
+                if dest == .synth {
+                    emergencySynthOff.store(true, ordering: .releasing)
+                } else {
+                    emergencySamplerOff.store(true, ordering: .releasing)
+                }
+            default:
+                break
+            }
             return false
         }
         buffer[t & mask] = event
@@ -108,5 +144,15 @@ public final class EventRing: @unchecked Sendable {
         let event = buffer[h & mask]
         head.store(h + 1, ordering: .releasing)
         return event
+    }
+
+    /// Consumer-side fallback for note-off/all-off events that arrived while
+    /// the ordinary queue was full.
+    func takeEmergencyAllOff(_ dest: KernelDest) -> Bool {
+        if dest == .synth {
+            emergencySynthOff.exchange(false, ordering: .acquiringAndReleasing)
+        } else {
+            emergencySamplerOff.exchange(false, ordering: .acquiringAndReleasing)
+        }
     }
 }

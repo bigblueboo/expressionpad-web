@@ -30,10 +30,6 @@
 			exceptions = (
 				EP00000400000004 /* Exceptions for "App" folder in "ExpressionPad" target */,
 			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
 			path = App;
 			sourceTree = "<group>";
 		};
@@ -108,7 +104,7 @@
 					};
 				};
 			};
-			buildConfigurationList = EP00000E0000000E /* Build configuration list for PBXProject "ExpressionPad" */;
+			buildConfigurationList = EP00000E0000000E /* Build configuration list for PBXProject "xpad" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -206,8 +202,10 @@
 		EP00001200000012 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = T92V34BUD5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
@@ -216,7 +214,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.modeofexpression.expressionpad;
+				PRODUCT_BUNDLE_IDENTIFIER = com.charliedeck.expressionpad;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -227,8 +225,10 @@
 		EP00001300000013 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = T92V34BUD5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
@@ -237,7 +237,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.0.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.modeofexpression.expressionpad;
+				PRODUCT_BUNDLE_IDENTIFIER = com.charliedeck.expressionpad;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -257,7 +257,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		EP00000E0000000E /* Build configuration list for PBXProject "ExpressionPad" */ = {
+		EP00000E0000000E /* Build configuration list for PBXProject "xpad" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				EP00001000000010 /* Debug */,

@@ -1,6 +1,6 @@
 /// SynthKernel — the entire instrument rendered in one real-time callback:
 /// polyphonic wavetable synth + sampler voices → distortion → delay → reverb
-/// → master → limiter, matching ../src/audio/engine.ts & sampler.ts node for
+/// → limiter, matching ../src/audio/engine.ts & sampler.ts node for
 /// node. Everything is preallocated; the only communication with the outside
 /// world is the lock-free EventRing and the output buffers.
 ///
@@ -8,9 +8,8 @@
 /// - setTargetAtTime(v, tau) → OnePole stepped per 32-sample block.
 /// - Envelopes: linear attack to peak, one-pole decay to peak·sustain
 ///   (tau = d/3), one-pole release (tau = r/3), hard stop at r·2+0.1 s.
-/// - Oscillator detune is captured at noteOn (the web build never re-writes
-///   osc.detune after start); SEMI changes retune running voices, TUNE only
-///   affects new ones — exactly engine.ts's retuneVoice behavior.
+/// - SEMI and TUNE updates retune running voices, including both generator-one
+///   fatten layers, matching engine.ts's retuneVoice behavior.
 import Foundation
 
 struct KernelParams {
@@ -33,6 +32,24 @@ private let ENV_ATTACK: Int32 = 1
 private let ENV_SUSTAIN: Int32 = 2
 private let ENV_RELEASED: Int32 = 3
 private let ENV_RETRIG_FADE: Int32 = 4
+private let ENV_STEAL_FADE: Int32 = 5
+private let MIN_ONSET_SAMPLES = 64
+private let STEAL_FADE_SAMPLES = 64
+
+fileprivate struct PendingSynthStart {
+    var id: Int32
+    var pitch: Float
+    var vel: Float
+    var order: Int
+}
+
+fileprivate struct PendingSamplerStart {
+    var id: Int32
+    var pitch: Float
+    var vel: Float
+    var order: Int
+    var sample: SampleRef
+}
 
 final class SynthVoice {
     var active = false
@@ -46,7 +63,8 @@ final class SynthVoice {
     var phase = [Float](repeating: 0, count: 4)
     var freqCur = [Float](repeating: 0, count: 4)
     var freqTgt = [Float](repeating: 0, count: 4)
-    var detune = [Float](repeating: 0, count: 4) // cents, fixed at noteOn
+    var detune = [Float](repeating: 0, count: 4) // generator tune + layer spread, cents
+    var layerDetune = [Float](repeating: 0, count: 4)
     var oscGen = [Int](repeating: 0, count: 4)
     var oscScale = [Float](repeating: 0, count: 4)
     var g1 = OnePole(0)
@@ -62,6 +80,10 @@ final class SynthVoice {
     var decayAlpha: Float = 0
     var releaseAlpha: Float = 0
     var killSamples = 0
+    var renderedSamples = 0
+    var pendingRelease = false
+    var stealStep: Float = 0
+    fileprivate var pendingStart: PendingSynthStart?
 }
 
 final class SamplerVoice {
@@ -82,6 +104,10 @@ final class SamplerVoice {
     var filter = Biquad()
     var cutoffSm = OnePole(0)
     var killSamples = 0
+    var renderedSamples = 0
+    var pendingRelease = false
+    var stealStep: Float = 0
+    fileprivate var pendingStart: PendingSamplerStart?
 }
 
 public final class SynthKernel {
@@ -103,6 +129,8 @@ public final class SynthKernel {
     // kernel's own default slabs from init).
     var table1: UnsafePointer<Float>
     var table2: UnsafePointer<Float>
+    var tablePublication1: WavetablePublication?
+    var tablePublication2: WavetablePublication?
     private let defaultTables: UnsafeMutablePointer<Float>
 
     var currentSample = SampleRef.none
@@ -112,7 +140,7 @@ public final class SynthKernel {
     var lfoFreqSm = OnePole(5)
     var lfoPitchGainSm = OnePole(0)
     var lfoFilterGainSm = OnePole(0)
-    var master = OnePole(0.78)
+    var synthOut = OnePole(0.78)
     var samplerOut = OnePole(0.8)
 
     // FX
@@ -125,6 +153,7 @@ public final class SynthKernel {
     var bus: [Float]
     var phaseIncScratch = [Float](repeating: 0, count: 4)
     var levelScratch = [Int](repeating: 0, count: 4)
+    var audibleScratch = [Bool](repeating: false, count: 4)
 
     public init(sampleRate: Double) {
         self.sampleRate = sampleRate
@@ -154,6 +183,11 @@ public final class SynthKernel {
     // ---------------------------------------------------------- events ---
 
     func drainEvents() {
+        // Capture overflow fallbacks first, but apply them after the queued
+        // events that preceded the dropped terminal event. Otherwise a queued
+        // note-on could run after the panic and recreate the stuck note.
+        let emergencySynthOff = events.takeEmergencyAllOff(.synth)
+        let emergencySamplerOff = events.takeEmergencyAllOff(.sampler)
         while let e = events.pop() {
             switch e {
             case let .noteOn(dest, id, pitch, vel):
@@ -169,18 +203,57 @@ public final class SynthKernel {
             case let .noteOff(dest, id):
                 if dest == .synth { synthNoteOff(id) } else { samplerNoteOff(id) }
             case let .allOff(dest):
-                if dest == .synth {
-                    for v in voices where v.active && !v.released { releaseSynthVoice(v) }
-                } else {
-                    for v in sVoices where v.active && v.stage != ENV_RELEASED { releaseSamplerVoice(v) }
-                }
+                hardAllOff(dest)
             case let .param(pid, value):
                 applyParam(pid, value)
-            case let .wavetable(gen, table):
-                if gen == 0 { table1 = table } else { table2 = table }
+            case let .wavetable(gen, publication):
+                if gen == 0 {
+                    tablePublication1?.retire()
+                    table1 = publication.table
+                    tablePublication1 = publication
+                } else {
+                    tablePublication2?.retire()
+                    table2 = publication.table
+                    tablePublication2 = publication
+                }
+                publication.markCurrent()
             case let .sample(ref):
                 currentSample = ref
             }
+        }
+        if emergencySynthOff { hardAllOff(.synth) }
+        if emergencySamplerOff { hardAllOff(.sampler) }
+    }
+
+    /// Panic is intentionally immediate. Normal note-offs keep their release
+    /// envelope; all-off is used for app suspension, MIDI disconnects, and
+    /// recovery from a saturated event queue, where silence must be certain.
+    func hardAllOff(_ dest: KernelDest) {
+        if dest == .synth {
+            for v in voices {
+                v.active = false
+                v.id = -1
+                v.pendingStart = nil
+                v.pendingRelease = false
+            }
+        } else {
+            for v in sVoices {
+                v.active = false
+                v.id = -1
+                v.pendingStart = nil
+                v.pendingRelease = false
+            }
+        }
+
+        // The FX are shared, so clear their history only after every source is
+        // idle. Consecutive synth/sampler panic events reach this condition on
+        // the second event without cutting off an unrelated active source.
+        if !voices.contains(where: \.active) && !sVoices.contains(where: \.active) {
+            dist.reset()
+            delay.reset()
+            reverb.reset()
+            limiter.reset()
+            bus.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
         }
     }
 
@@ -196,9 +269,13 @@ public final class SynthKernel {
                 params.gen2Semi = v
                 retuneVoices()
             }
-        case .gen1Tune: params.gen1Tune = v
+        case .gen1Tune:
+            params.gen1Tune = v
+            retuneDetunes(generator: 0)
         case .gen1Level: params.gen1Level = v
-        case .gen2Tune: params.gen2Tune = v
+        case .gen2Tune:
+            params.gen2Tune = v
+            retuneDetunes(generator: 1)
         case .gen2Level: params.gen2Level = v
         case .envA: params.envA = v
         case .envD: params.envD = v
@@ -239,6 +316,15 @@ public final class SynthKernel {
         }
     }
 
+    func retuneDetunes(generator: Int) {
+        let tune = generator == 0 ? params.gen1Tune : params.gen2Tune
+        for v in voices where v.active {
+            for k in 0..<v.oscCount where v.oscGen[k] == generator {
+                v.detune[k] = tune + v.layerDetune[k]
+            }
+        }
+    }
+
     // ------------------------------------------------------ synth voices ---
 
     func findSynth(_ id: Int32) -> SynthVoice? {
@@ -247,35 +333,51 @@ public final class SynthKernel {
     }
 
     func synthNoteOn(_ id: Int32, _ pitch: Float, _ vel: Float) {
-        if let existing = findSynth(id) { releaseSynthVoice(existing) }
+        if let existing = findSynth(id) { beginSynthRelease(existing) }
         // Voice stealing: release the oldest playing voice past the cap.
         // (Manual scans — no allocating filter/min on the audio thread.)
         var playingCount = 0
         var oldestPlaying: SynthVoice?
         var freeSlot: SynthVoice?
-        var oldestActive: SynthVoice?
+        var quietestReleased: SynthVoice?
         for v in voices {
             if v.active && !v.released {
                 playingCount += 1
                 if oldestPlaying == nil || v.order < oldestPlaying!.order { oldestPlaying = v }
             }
             if !v.active && freeSlot == nil { freeSlot = v }
-            if v.active && (oldestActive == nil || v.order < oldestActive!.order) { oldestActive = v }
+            if v.active, v.released, v.pendingStart == nil,
+               quietestReleased == nil || v.env < quietestReleased!.env {
+                quietestReleased = v
+            }
         }
+        var newlyReleased: SynthVoice?
         if playingCount >= SynthKernel.maxVoices, let oldest = oldestPlaying {
-            releaseSynthVoice(oldest)
+            beginSynthRelease(oldest)
+            newlyReleased = oldest
         }
-        // Slot: prefer inactive, else hard-steal the oldest released tail.
-        guard let v = freeSlot ?? oldestActive else { return }
 
         orderCounter += 1
+        let start = PendingSynthStart(id: id, pitch: pitch, vel: vel, order: orderCounter)
+        if let freeSlot {
+            startSynthVoice(freeSlot, start)
+        } else if let victim = quietestReleased ?? newlyReleased {
+            scheduleSynthStart(start, replacing: victim)
+        }
+    }
+
+    private func startSynthVoice(_ v: SynthVoice, _ start: PendingSynthStart) {
         v.active = true
         v.released = false
-        v.id = id
-        v.order = orderCounter
-        v.pitch = pitch
-        v.vel = vel
+        v.id = start.id
+        v.order = start.order
+        v.pitch = start.pitch
+        v.vel = start.vel
         v.pressure = 0
+        v.renderedSamples = 0
+        v.pendingRelease = false
+        v.pendingStart = nil
+        v.stealStep = 0
 
         let fatten = params.fattenOn > 0.5
         let spread = lerp(4, 28, params.fattenAmt)
@@ -287,10 +389,11 @@ public final class SynthKernel {
             let layerScale: Float = k >= 2 ? 0.45 : 1
             let semi = gen == 0 ? params.gen1Semi : params.gen2Semi
             let tune = gen == 0 ? params.gen1Tune : params.gen2Tune
-            let f = Float(midiToFreq(Double(pitch + semi)))
+            let f = Float(midiToFreq(Double(start.pitch + semi)))
             v.phase[k] = 0
             v.freqCur[k] = f
             v.freqTgt[k] = f
+            v.layerDetune[k] = layerDet
             v.detune[k] = tune + layerDet
             v.oscGen[k] = gen
             v.oscScale[k] = layerScale
@@ -302,7 +405,7 @@ public final class SynthKernel {
         v.cutoffSm.snap(Float(cutoffToHz(Double(norm))))
         v.qSm.snap(params.filterRes * 18)
 
-        v.envPeak = Float(velocityToGain(Double(vel)))
+        v.envPeak = Float(velocityToGain(Double(start.vel)))
         v.env = 0
         v.envStage = ENV_ATTACK
         let a = max(0.001, params.envA)
@@ -310,6 +413,19 @@ public final class SynthKernel {
         v.envSustain = v.envPeak * params.envS
         let dTau = max(0.01, params.envD) / 3
         v.decayAlpha = 1 - exp(-1 / (dTau * sr))
+    }
+
+    private func scheduleSynthStart(_ start: PendingSynthStart, replacing v: SynthVoice) {
+        // A released tail can still be far above zero. Fade it over a bounded
+        // 64-sample window, then reuse the same preallocated slot. This avoids
+        // turning slot pressure into a buffer-boundary amplitude step.
+        v.released = true
+        v.id = -1
+        v.pendingRelease = false
+        v.pendingStart = start
+        v.envStage = ENV_STEAL_FADE
+        v.killSamples = STEAL_FADE_SAMPLES
+        v.stealStep = max(0, v.env) / Float(STEAL_FADE_SAMPLES)
     }
 
     func synthGlide(_ id: Int32, _ pitch: Float) {
@@ -321,9 +437,10 @@ public final class SynthKernel {
         }
     }
 
-    func releaseSynthVoice(_ v: SynthVoice) {
+    func beginSynthRelease(_ v: SynthVoice) {
         let r = max(0.02, params.envR)
         v.released = true
+        v.pendingRelease = false
         v.envStage = ENV_RELEASED
         v.releaseAlpha = 1 - exp(-1 / (r / 3 * sr))
         v.killSamples = Int((r * 2 + 0.1) * sr)
@@ -331,7 +448,11 @@ public final class SynthKernel {
 
     func synthNoteOff(_ id: Int32) {
         guard let v = findSynth(id) else { return }
-        releaseSynthVoice(v)
+        if v.renderedSamples < MIN_ONSET_SAMPLES {
+            v.pendingRelease = true
+        } else {
+            beginSynthRelease(v)
+        }
     }
 
     // ---------------------------------------------------- sampler voices ---
@@ -344,27 +465,45 @@ public final class SynthKernel {
     }
 
     func samplerNoteOn(_ id: Int32, _ pitch: Float, _ vel: Float) {
-        guard currentSample.data != nil else { return }
-        if let existing = findSampler(id) { releaseSamplerVoice(existing) }
+        let sample = currentSample
+        guard sample.data != nil else { return }
+        if let existing = findSampler(id) { beginSamplerRelease(existing) }
         var freeSlot: SamplerVoice?
-        var oldestActive: SamplerVoice?
+        var quietestTail: SamplerVoice?
+        var oldestPlaying: SamplerVoice?
         for v in sVoices {
             if !v.active && freeSlot == nil { freeSlot = v }
-            if v.active && (oldestActive == nil || v.order < oldestActive!.order) { oldestActive = v }
+            if v.active, v.pendingStart == nil,
+               v.stage == ENV_RELEASED || v.stage == ENV_RETRIG_FADE || v.stage == ENV_STEAL_FADE {
+                if quietestTail == nil || v.gain < quietestTail!.gain { quietestTail = v }
+            } else if v.active, v.pendingStart == nil,
+                      oldestPlaying == nil || v.order < oldestPlaying!.order {
+                oldestPlaying = v
+            }
         }
-        guard let v = freeSlot ?? oldestActive else { return }
 
         orderCounter += 1
+        let start = PendingSamplerStart(
+            id: id, pitch: pitch, vel: vel, order: orderCounter, sample: sample
+        )
+        if let freeSlot {
+            startSamplerVoice(freeSlot, start)
+        } else if let victim = quietestTail ?? oldestPlaying {
+            scheduleSamplerStart(start, replacing: victim)
+        }
+    }
+
+    private func startSamplerVoice(_ v: SamplerVoice, _ start: PendingSamplerStart) {
         v.active = true
-        v.id = id
-        v.order = orderCounter
-        v.sample = currentSample
-        v.pitch = pitch
-        v.vel = vel
+        v.id = start.id
+        v.order = start.order
+        v.sample = start.sample
+        v.pitch = start.pitch
+        v.vel = start.vel
         v.pressure = 0
         v.pos = 0
-        v.centsSm.snap((pitch - currentSample.root) * 100)
-        v.peak = Float(velocityToGain(Double(vel)))
+        v.centsSm.snap((start.pitch - start.sample.root) * 100)
+        v.peak = Float(velocityToGain(Double(start.vel)))
         v.gain = 0
         v.stage = ENV_ATTACK
         let a = max(0.002, params.samplerAttack)
@@ -372,6 +511,19 @@ public final class SynthKernel {
         v.filter.reset()
         v.cutoffSm.snap(Float(cutoffToHz(0.8)))
         v.killSamples = 0
+        v.renderedSamples = 0
+        v.pendingRelease = false
+        v.pendingStart = nil
+        v.stealStep = 0
+    }
+
+    private func scheduleSamplerStart(_ start: PendingSamplerStart, replacing v: SamplerVoice) {
+        v.id = -1
+        v.pendingRelease = false
+        v.pendingStart = start
+        v.stage = ENV_STEAL_FADE
+        v.killSamples = STEAL_FADE_SAMPLES
+        v.stealStep = max(0, v.gain) / Float(STEAL_FADE_SAMPLES)
     }
 
     func samplerGlide(_ id: Int32, _ pitch: Float) {
@@ -388,8 +540,9 @@ public final class SynthKernel {
         v.centsSm.target = (pitch - v.sample.root) * 100
     }
 
-    func releaseSamplerVoice(_ v: SamplerVoice) {
+    func beginSamplerRelease(_ v: SamplerVoice) {
         let r = max(0.02, params.samplerRelease)
+        v.pendingRelease = false
         v.stage = ENV_RELEASED
         v.releaseAlpha = 1 - exp(-1 / (r / 3 * sr))
         v.killSamples = Int((r * 2 + 0.1) * sr)
@@ -397,15 +550,22 @@ public final class SynthKernel {
 
     func samplerNoteOff(_ id: Int32) {
         guard let v = findSampler(id) else { return }
-        releaseSamplerVoice(v)
+        if v.renderedSamples < MIN_ONSET_SAMPLES {
+            v.pendingRelease = true
+        } else {
+            beginSamplerRelease(v)
+        }
     }
 
     // ---------------------------------------------------------- render ---
 
     public func render(frames: Int, outL: UnsafeMutablePointer<Float>, outR: UnsafeMutablePointer<Float>) {
-        drainEvents()
         var offset = 0
         while offset < frames {
+            // Apply control traffic at the next 32-sample boundary instead of
+            // making events that arrive during a larger hardware callback wait
+            // for the following callback.
+            drainEvents()
             let n = min(SynthKernel.blockSize, frames - offset)
             renderBlock(n, outL + offset, outR + offset)
             offset += n
@@ -436,11 +596,14 @@ public final class SynthKernel {
         for i in 0..<n { bus[i] = 0 }
 
         // ----- synth voices
+        synthOut.target = params.synthLevel
+        let synthGain = synthOut.step(a02)
         let glideTau = lerp(0.004, 0.06, params.slide)
         let glideAlpha = smoothingAlpha(dt: dt, tau: glideTau)
         for v in voices where v.active {
             renderSynthVoice(v, n, glideAlpha: glideAlpha, a02: a02, a015: a015,
-                             lfoPitchCents: lfoPitchCents, lfoFilterCents: lfoFilterCents)
+                             lfoPitchCents: lfoPitchCents, lfoFilterCents: lfoFilterCents,
+                             outGain: synthGain)
         }
 
         // ----- sampler voices
@@ -450,22 +613,19 @@ public final class SynthKernel {
             renderSamplerVoice(v, n, glideAlpha: glideAlpha, a015: a015, a03: a03, outGain: sampGain)
         }
 
-        // ----- FX chain: dist → delay → reverb → master → limiter
+        // ----- FX chain: dist → delay → reverb → limiter
         dist.update(dt: dt, amt: params.distortAmt, on: params.distortOn > 0.5)
         delay.update(dt: dt, time: params.delayTime, fdbk: params.delayFdbk,
                      wet: params.delayOn > 0.5 ? params.delayMix : 0)
         reverb.update(dt: dt, fdbk: params.reverbFdbk,
                       wet: params.reverbOn > 0.5 ? params.reverbMix : 0)
-        master.target = params.synthLevel
-        let masterGain = master.step(a02)
-
         var rv: (l: Float, r: Float) = (0, 0)
         let rvWet = reverb.wetGain
         for i in 0..<n {
             let delayed = delay.process(dist.process(bus[i]))
             reverb.process(delayed, into: &rv)
-            var l = (delayed + rv.l * rvWet) * masterGain
-            var r = (delayed + rv.r * rvWet) * masterGain
+            var l = delayed + rv.l * rvWet
+            var r = delayed + rv.r * rvWet
             limiter.process(l: &l, r: &r)
             outL[i] = l
             outR[i] = r
@@ -474,7 +634,7 @@ public final class SynthKernel {
 
     private func renderSynthVoice(
         _ v: SynthVoice, _ n: Int, glideAlpha: Float, a02: Float, a015: Float,
-        lfoPitchCents: Float, lfoFilterCents: Float
+        lfoPitchCents: Float, lfoFilterCents: Float, outGain: Float
     ) {
         // Per-block modulation & coefficient updates.
         v.g1.target = params.gen1Level
@@ -493,11 +653,12 @@ public final class SynthKernel {
             let eff = v.freqCur[k] * exp2((v.detune[k] + lfoPitchCents) / 1200)
             phaseIncScratch[k] = eff / sr
             levelScratch[k] = Wavetable.level(forFreq: Double(eff), sampleRate: sampleRate)
+            audibleScratch[k] = eff > 0 && eff < sr * 0.5
         }
 
         for i in 0..<n {
             var mix: Float = 0
-            for k in 0..<v.oscCount {
+            for k in 0..<v.oscCount where audibleScratch[k] {
                 let table = v.oscGen[k] == 0 ? table1 : table2
                 let base = levelScratch[k] * Wavetable.stride
                 let x = v.phase[k] * Float(Wavetable.size)
@@ -507,7 +668,7 @@ public final class SynthKernel {
                 let sample = p[0] + (p[1] - p[0]) * frac
                 mix += sample * v.oscScale[k] * (v.oscGen[k] == 0 ? g1 : g2)
                 v.phase[k] += phaseIncScratch[k]
-                if v.phase[k] >= 1 { v.phase[k] -= 1 }
+                v.phase[k] -= floor(v.phase[k])
             }
             let filtered = v.filter.process(mix)
 
@@ -521,16 +682,33 @@ public final class SynthKernel {
                 }
             case ENV_SUSTAIN:
                 v.env += (v.envSustain - v.env) * v.decayAlpha
+            case ENV_STEAL_FADE:
+                v.env = max(0, v.env - v.stealStep)
+                v.killSamples -= 1
+                bus[i] += filtered * v.env * outGain
+                if v.killSamples <= 0 {
+                    if let pending = v.pendingStart {
+                        startSynthVoice(v, pending)
+                    } else {
+                        v.active = false
+                    }
+                    return
+                }
+                continue
             default: // released
                 v.env += (0 - v.env) * v.releaseAlpha
                 v.killSamples -= 1
                 if v.killSamples <= 0 || v.env < 1e-5 {
                     v.active = false
-                    bus[i] += filtered * v.env
+                    bus[i] += filtered * v.env * outGain
                     return
                 }
             }
-            bus[i] += filtered * v.env
+            bus[i] += filtered * v.env * outGain
+            v.renderedSamples += 1
+            if v.pendingRelease, v.renderedSamples >= MIN_ONSET_SAMPLES {
+                beginSynthRelease(v)
+            }
         }
     }
 
@@ -564,7 +742,11 @@ public final class SynthKernel {
             if loop {
                 while pos >= loopEnd { pos -= (loopEnd - loopStart) }
             } else if pos >= Double(count - 1) {
-                v.active = false
+                if let pending = v.pendingStart {
+                    startSamplerVoice(v, pending)
+                } else {
+                    v.active = false
+                }
                 return
             }
             let i0 = Int(pos)
@@ -589,6 +771,19 @@ public final class SynthKernel {
                     v.active = false
                     return
                 }
+            case ENV_STEAL_FADE:
+                v.gain = max(0, v.gain - v.stealStep)
+                v.killSamples -= 1
+                bus[i] += v.filter.process(sample) * v.gain * outGain
+                if v.killSamples <= 0 {
+                    if let pending = v.pendingStart {
+                        startSamplerVoice(v, pending)
+                    } else {
+                        v.active = false
+                    }
+                    return
+                }
+                continue
             default: // released
                 v.gain += (0 - v.gain) * v.releaseAlpha
                 v.killSamples -= 1
@@ -598,6 +793,10 @@ public final class SynthKernel {
                 }
             }
             bus[i] += v.filter.process(sample) * v.gain * outGain
+            v.renderedSamples += 1
+            if v.pendingRelease, v.renderedSamples >= MIN_ONSET_SAMPLES {
+                beginSamplerRelease(v)
+            }
         }
     }
 }

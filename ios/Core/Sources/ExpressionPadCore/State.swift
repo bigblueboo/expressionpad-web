@@ -161,12 +161,12 @@ public func defaultState() -> AppState {
         ),
         synth: SynthConfig(
             preset: "Super Sine",
-            gen1: GenConfig(morph: 0.1, semi: 0, tune: 0, level: 0.8),
-            gen2: GenConfig(morph: 0.3, semi: 12, tune: 4, level: 0.25),
-            bright: 0.5,
-            env: EnvConfig(a: 0.01, d: 0.25, s: 0.7, r: 0.3),
-            filter: FilterConfig(cutoff: 0.75, res: 0.15, env: 0.3),
-            lfo: LfoConfig(rate: 5, depth: 0.1, target: .pitch),
+            gen1: GenConfig(morph: 0.08, semi: 0, tune: 0, level: 0.85),
+            gen2: GenConfig(morph: 0, semi: 12, tune: 3, level: 0.22),
+            bright: 0.4,
+            env: EnvConfig(a: 0.01, d: 0.3, s: 0.75, r: 0.35),
+            filter: FilterConfig(cutoff: 0.8, res: 0.1, env: 0.2),
+            lfo: LfoConfig(rate: 5, depth: 0.08, target: .pitch),
             level: 0.78
         ),
         sampler: SamplerConfig(
@@ -285,7 +285,7 @@ public final class Store: ObservableObject {
     private var saveTimer: Timer?
 
     public init(initial: AppState? = nil) {
-        self.state = initial ?? defaultState()
+        self.state = sanitizeState(initial ?? defaultState())
     }
 
     /// Load persisted JSON merged over defaults (tolerates stale shapes).
@@ -298,7 +298,7 @@ public final class Store: ObservableObject {
             guard var target = defaults as? [String: Any] else { return Store() }
             deepMerge(&target, stored)
             let merged = try JSONSerialization.data(withJSONObject: target)
-            let state = try JSONDecoder().decode(AppState.self, from: merged)
+            let state = sanitizeState(try JSONDecoder().decode(AppState.self, from: merged))
             return Store(initial: state)
         } catch {
             // corrupted state — start fresh
@@ -313,6 +313,7 @@ public final class Store: ObservableObject {
     public func set<T: Equatable>(_ keyPath: WritableKeyPath<AppState, T>, _ value: T) {
         if state[keyPath: keyPath] == value { return }
         state[keyPath: keyPath] = value
+        state = sanitizeState(state)
         emit(PathMap.path(for: keyPath))
         scheduleSave()
     }
@@ -324,6 +325,12 @@ public final class Store: ObservableObject {
         return { [weak self] in self?.listeners.removeValue(forKey: id) }
     }
 
+    public func flushSave() {
+        saveTimer?.invalidate()
+        saveTimer = nil
+        persist()
+    }
+
     private func emit(_ path: String) {
         for fn in listeners.values { fn(state, path) }
     }
@@ -332,10 +339,78 @@ public final class Store: ObservableObject {
         guard saver != nil else { return }
         saveTimer?.invalidate()
         saveTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
-            guard let self, let saver = self.saver else { return }
-            if let data = try? JSONEncoder().encode(self.state) { saver(data) }
+            self?.saveTimer = nil
+            self?.persist()
         }
     }
+
+    private func persist() {
+        guard let saver, let data = try? JSONEncoder().encode(state) else { return }
+        saver(data)
+    }
+}
+
+private func finite(_ value: Double, _ fallback: Double, _ lo: Double, _ hi: Double) -> Double {
+    value.isFinite ? clamp(value, lo, hi) : fallback
+}
+
+/// Clamp numeric leaves and reject unknown named values after decoding and
+/// after every typed mutation. This keeps stale defaults and future versions
+/// from creating invalid layout/audio parameters.
+public func sanitizeState(_ input: AppState) -> AppState {
+    var state = input
+    let d = defaultState()
+
+    state.pad.rows = clamp(state.pad.rows, 1, 8)
+    state.pad.cols = clamp(state.pad.cols, 4, 24)
+    if ROW_TUNINGS[state.pad.rowTuning] == nil { state.pad.rowTuning = d.pad.rowTuning }
+    if SCALES[state.pad.colScale] == nil { state.pad.colScale = d.pad.colScale }
+    state.pad.baseNote = clamp(state.pad.baseNote, 12, 96)
+    state.pad.slide = finite(state.pad.slide, d.pad.slide, 0, 1)
+
+    state.synth.gen1.morph = finite(state.synth.gen1.morph, d.synth.gen1.morph, 0, 1)
+    state.synth.gen1.semi = clamp(state.synth.gen1.semi, -24, 24)
+    state.synth.gen1.tune = finite(state.synth.gen1.tune, d.synth.gen1.tune, -50, 50)
+    state.synth.gen1.level = finite(state.synth.gen1.level, d.synth.gen1.level, 0, 1)
+    state.synth.gen2.morph = finite(state.synth.gen2.morph, d.synth.gen2.morph, 0, 1)
+    state.synth.gen2.semi = clamp(state.synth.gen2.semi, -24, 24)
+    state.synth.gen2.tune = finite(state.synth.gen2.tune, d.synth.gen2.tune, -50, 50)
+    state.synth.gen2.level = finite(state.synth.gen2.level, d.synth.gen2.level, 0, 1)
+    if !PRESET_NAMES.contains(state.synth.preset) { state.synth.preset = d.synth.preset }
+    state.synth.bright = finite(state.synth.bright, d.synth.bright, 0, 1)
+    state.synth.env.a = finite(state.synth.env.a, d.synth.env.a, 0.001, 2)
+    state.synth.env.d = finite(state.synth.env.d, d.synth.env.d, 0.01, 3)
+    state.synth.env.s = finite(state.synth.env.s, d.synth.env.s, 0, 1)
+    state.synth.env.r = finite(state.synth.env.r, d.synth.env.r, 0.02, 5)
+    state.synth.filter.cutoff = finite(state.synth.filter.cutoff, d.synth.filter.cutoff, 0, 1)
+    state.synth.filter.res = finite(state.synth.filter.res, d.synth.filter.res, 0, 1)
+    state.synth.filter.env = finite(state.synth.filter.env, d.synth.filter.env, 0, 1)
+    state.synth.lfo.rate = finite(state.synth.lfo.rate, d.synth.lfo.rate, 0.05, 30)
+    state.synth.lfo.depth = finite(state.synth.lfo.depth, d.synth.lfo.depth, 0, 1)
+    state.synth.level = finite(state.synth.level, d.synth.level, 0, 1)
+
+    if !SAMPLE_NAMES.contains(state.sampler.preset) && state.sampler.preset != USER_PRESET {
+        state.sampler.preset = d.sampler.preset
+    }
+    state.sampler.level = finite(state.sampler.level, d.sampler.level, 0, 1)
+    state.sampler.attack = finite(state.sampler.attack, d.sampler.attack, 0.002, 0.5)
+    state.sampler.release = finite(state.sampler.release, d.sampler.release, 0.02, 3)
+    state.sampler.userRoot = clamp(state.sampler.userRoot, 24, 96)
+
+    state.fx.reverb.fdbk = finite(state.fx.reverb.fdbk, d.fx.reverb.fdbk, 0, 1)
+    state.fx.reverb.mix = finite(state.fx.reverb.mix, d.fx.reverb.mix, 0, 1)
+    state.fx.delay.time = finite(state.fx.delay.time, d.fx.delay.time, 0.01, 2)
+    state.fx.delay.fdbk = finite(state.fx.delay.fdbk, d.fx.delay.fdbk, 0, 0.9)
+    state.fx.delay.mix = finite(state.fx.delay.mix, d.fx.delay.mix, 0, 1)
+    state.fx.distort.amt = finite(state.fx.distort.amt, d.fx.distort.amt, 0, 1)
+    state.fx.fatten.amt = finite(state.fx.fatten.amt, d.fx.fatten.amt, 0, 1)
+    state.midi.bendRange = clamp(state.midi.bendRange, 1, 96)
+
+    if !SCHEME_NAMES.contains(state.appearance.scheme) { state.appearance.scheme = d.appearance.scheme }
+    state.appearance.brightness = finite(state.appearance.brightness, d.appearance.brightness, 0, 1)
+    state.appearance.rippleAmount = finite(state.appearance.rippleAmount, d.appearance.rippleAmount, 0, 1)
+    state.appearance.contrast = finite(state.appearance.contrast, d.appearance.contrast, 0, 1)
+    return state
 }
 
 /// Merge `src` over `target`, keeping only keys that already exist with the

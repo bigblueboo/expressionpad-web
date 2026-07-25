@@ -165,6 +165,28 @@ struct DSPTests {
         #expect(maxOut < 1.1)
         #expect(maxOut > 0.4)
     }
+
+    @Test func disabledDistortionIsAnExactDryBypassAndStillFadesIn() {
+        var dist = Distortion()
+        let dryInput: Float = 0.37
+        #expect(dist.process(dryInput) == dryInput)
+
+        dist.update(dt: 0.02, amt: 0.8, on: true)
+        var differsFromDry = false
+        for i in 0..<256 {
+            let x = sin(Float(i) * 2 * .pi * 440 / 48_000)
+            if abs(dist.process(x) - x) > 0.001 { differsFromDry = true }
+        }
+        #expect(differsFromDry)
+
+        // Let the normal 20 ms wet/dry ramp finish before expecting the
+        // zero-cost bypass to become exact again.
+        for _ in 0..<60 {
+            dist.update(dt: 0.005, amt: 0.8, on: false)
+            _ = dist.process(dryInput)
+        }
+        #expect(dist.process(dryInput) == dryInput)
+    }
 }
 
 struct SampleGenTests {

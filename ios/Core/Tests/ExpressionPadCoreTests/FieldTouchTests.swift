@@ -150,6 +150,51 @@ final class TouchTrackerTests {
         #expect(sink.ons().count == 1)
     }
 
+    @Test func slideGlidesAcrossRowsWithoutRetriggeringVoice() {
+        pad.slide = 0.5
+        pad.frets = false
+        tracker.down(1, 50, 390) // bottom row: C3
+        tracker.move(1, 50, 10) // top row: D#4 with fourths tuning
+
+        let glides = sink.calls.compactMap { call -> (Int, Double)? in
+            if case let .glide(id, pitch) = call { return (id, pitch) }
+            return nil
+        }
+        #expect(glides.last?.0 == 1)
+        #expect(glides.last?.1 == 63)
+        #expect(sink.ons().count == 1)
+        #expect(!sink.calls.contains(.off(1)))
+        #expect(tracker.active[1]?.key.row == 3)
+
+        tracker.move(1, 50, 390)
+        let returnGlides = sink.calls.compactMap { call -> Double? in
+            if case let .glide(_, pitch) = call { return pitch }
+            return nil
+        }
+        #expect(returnGlides.last == 48)
+        #expect(sink.ons().count == 1)
+    }
+
+    @Test func continuousSlideDoesNotInjectNewRippleEnergyAcrossKeys() {
+        pad.slide = 0.5
+        var triggered: [Int] = []
+        let localTracker = TouchTracker(
+            getLayout: { [unowned self] in self.layout },
+            getPad: { [unowned self] in self.pad },
+            sink: sink,
+            onTrigger: { triggered.append($0.id) }
+        )
+        localTracker.down(1, 50, 390)
+        localTracker.move(1, 150, 390)
+        localTracker.move(1, 250, 390)
+        localTracker.move(1, 350, 390)
+        #expect(triggered.count == 1)
+        #expect(sink.calls.contains {
+            if case .glide = $0 { return true }
+            return false
+        })
+    }
+
     @Test func fretsSnapsSlidPitch() {
         pad.slide = 0.5
         pad.frets = true

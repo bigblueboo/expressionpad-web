@@ -60,6 +60,29 @@ struct EventRingTests {
         while ring.pop() != nil { count += 1 }
         #expect(count == 8)
     }
+
+    @Test func overflowPreservesTerminalSafety() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        _ = kernel.renderBuffer(64)
+        for i in 0..<1100 {
+            kernel.events.push(.param(.synthLevel, Float(i % 10) / 10))
+        }
+        kernel.events.push(.noteOff(dest: .synth, id: 1))
+        _ = kernel.renderBuffer(64)
+        #expect(!kernel.voices.contains(where: { $0.active && $0.id == 1 }))
+    }
+
+    @Test func overflowTerminalRunsAfterEarlierQueuedNoteOn() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        for i in 0..<1100 {
+            kernel.events.push(.param(.synthLevel, Float(i % 10) / 10))
+        }
+        kernel.events.push(.noteOff(dest: .synth, id: 1))
+        _ = kernel.renderBuffer(64)
+        #expect(!kernel.voices.contains(where: { $0.active && $0.id == 1 }))
+    }
 }
 
 struct KernelTests {
@@ -89,6 +112,15 @@ struct KernelTests {
         #expect(kernel.voiceCount == 0)
     }
 
+    @Test func sameDrainSynthTapStillProducesAnOnset() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.reverbOn, 0))
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        kernel.events.push(.noteOff(dest: .synth, id: 1))
+        let (left, _) = kernel.renderBuffer(240)
+        #expect(rms(left[0...]) > 1e-5)
+    }
+
     @Test func polyphonyAndVoiceStealing() {
         let kernel = SynthKernel(sampleRate: SR)
         for i in 0..<12 {
@@ -103,6 +135,68 @@ struct KernelTests {
         #expect(playing <= SynthKernel.maxVoices)
     }
 
+    @Test func correlatedPolyphonyStaysWithinOutputHeadroom() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.reverbOn, 0))
+        for id: Int32 in 1...10 {
+            kernel.events.push(.noteOn(dest: .synth, id: id, pitch: 60, vel: 1))
+        }
+        let (left, right) = kernel.renderBuffer(4800)
+        let peak = zip(left, right).reduce(Float(0)) {
+            max($0, abs($1.0), abs($1.1))
+        }
+        #expect(peak <= 1, "peak was \(peak)")
+    }
+
+    @Test func rapidTapsStayFiniteAndContinuousAtRenderBoundaries() {
+        let kernel = SynthKernel(sampleRate: SR)
+        let frames = 240 // requested hardware I/O quantum: 5 ms @ 48 kHz
+        var previous: Float = 0
+        var largestBoundaryJump: Float = 0
+        var nextId: Int32 = 0
+        var activeId: Int32?
+
+        // Fifty taps/second is intentionally beyond a normal single-finger
+        // performance and forces release-tail slot reuse.
+        for block in 0..<200 {
+            if block % 4 == 0 {
+                nextId += 1
+                activeId = nextId
+                kernel.events.push(.noteOn(dest: .synth, id: nextId, pitch: 60, vel: 1))
+            } else if block % 4 == 1, let id = activeId {
+                kernel.events.push(.noteOff(dest: .synth, id: id))
+                activeId = nil
+            }
+            let (left, right) = kernel.renderBuffer(frames)
+            #expect(allFinite(left))
+            #expect(allFinite(right))
+            largestBoundaryJump = max(largestBoundaryJump, abs(left[0] - previous))
+            previous = left[frames - 1]
+        }
+
+        #expect(largestBoundaryJump < 0.1)
+        #expect(kernel.voiceCount <= SynthKernel.voiceSlots)
+    }
+
+    @Test func slotPressureReclaimsAReleasedTailBeforeAHeldSynthVoice() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 48, vel: 0.7))
+        _ = kernel.renderBuffer(240)
+
+        for id: Int32 in 2...24 {
+            kernel.events.push(.noteOn(dest: .synth, id: id, pitch: 72, vel: 1))
+            _ = kernel.renderBuffer(64)
+            kernel.events.push(.noteOff(dest: .synth, id: id))
+            _ = kernel.renderBuffer(64)
+        }
+        kernel.events.push(.noteOn(dest: .synth, id: 25, pitch: 76, vel: 1))
+        _ = kernel.renderBuffer(32)
+
+        #expect(kernel.findSynth(1) != nil)
+        _ = kernel.renderBuffer(64)
+        #expect(kernel.findSynth(25) != nil)
+    }
+
     @Test func glideMovesPitch() {
         let kernel = SynthKernel(sampleRate: SR)
         kernel.events.push(.param(.slide, 0.35))
@@ -113,6 +207,23 @@ struct KernelTests {
         let v = kernel.voices.first { $0.active && $0.id == 1 }!
         let expected = Float(midiToFreq(72))
         #expect(abs(v.freqCur[0] - expected) < expected * 0.02)
+    }
+
+    @Test func tuneUpdatesRetainGeneratorAndFattenAssignments() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.fattenOn, 1))
+        kernel.events.push(.param(.fattenAmt, 0.4))
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        _ = kernel.renderBuffer(64)
+        kernel.events.push(.param(.gen1Tune, 11))
+        kernel.events.push(.param(.gen2Tune, -7))
+        _ = kernel.renderBuffer(64)
+
+        let voice = kernel.voices.first { $0.active && $0.id == 1 }!
+        #expect(abs(voice.detune[0] - 11) < 0.001)
+        #expect(abs(voice.detune[1] + 7) < 0.001)
+        #expect(abs(voice.detune[2] - 24.6) < 0.001)
+        #expect(abs(voice.detune[3] + 2.6) < 0.001)
     }
 
     @Test func pressureOpensFilter() {
@@ -167,16 +278,45 @@ struct KernelTests {
         #expect(rms(echo[0...]) > 1e-5)
     }
 
+    @Test func allOffIsImmediateAndClearsSharedFxWhenIdle() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.delayOn, 1))
+        kernel.events.push(.param(.delayMix, 0.8))
+        kernel.events.push(.param(.delayTime, 0.03))
+        kernel.events.push(.param(.reverbOn, 1))
+        kernel.events.push(.param(.reverbMix, 0.8))
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        let (before, _) = kernel.renderBuffer(4800)
+        #expect(rms(before[2400...]) > 0.005)
+
+        kernel.events.push(.allOff(dest: .synth))
+        let (afterL, afterR) = kernel.renderBuffer(4800)
+        #expect(kernel.voiceCount == 0)
+        #expect(rms(afterL[0...]) < 1e-6)
+        #expect(rms(afterR[0...]) < 1e-6)
+    }
+
     @Test func wavetableSwapKeepsRunning() {
         let kernel = SynthKernel(sampleRate: SR)
         let pool = WavetablePool()
         kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 0.9))
         _ = kernel.renderBuffer(2400)
-        kernel.events.push(.wavetable(gen: 0, table: pool.build(morph: 1.0, bright: 0.9)))
-        kernel.events.push(.wavetable(gen: 1, table: pool.build(morph: 0.5, bright: 0.9)))
+        kernel.events.push(.wavetable(gen: 0, publication: pool.build(morph: 1.0, bright: 0.9)!))
+        kernel.events.push(.wavetable(gen: 1, publication: pool.build(morph: 0.5, bright: 0.9)!))
         let (l, _) = kernel.renderBuffer(4800)
         #expect(allFinite(l))
         #expect(rms(l[0...]) > 0.005)
+    }
+
+    @Test func pitchesAboveNyquistStayFiniteAndInBounds() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.gen1Semi, 24))
+        kernel.events.push(.param(.gen2Semi, 24))
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 180, vel: 1))
+        let (l, r) = kernel.renderBuffer(48_000)
+        #expect(allFinite(l))
+        #expect(allFinite(r))
+        #expect(rms(l[0...]) < 1e-6)
     }
 
     @Test func stereoReverbDecorrelates() {
@@ -223,6 +363,14 @@ struct SamplerKernelTests {
         #expect(rms(l[2400...]) > 0.005)
     }
 
+    @Test func samplerLevelIsIndependentFromSynthLevel() {
+        let kernel = makeKernelWithSample()
+        kernel.events.push(.param(.synthLevel, 0))
+        kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 60, vel: 0.9))
+        let (l, _) = kernel.renderBuffer(9600)
+        #expect(rms(l[2400...]) > 0.005)
+    }
+
     @Test func samplerNoteOffReleases() {
         let kernel = makeKernelWithSample("English Horn") // looping — sustains forever
         kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 57, vel: 0.9))
@@ -233,6 +381,34 @@ struct SamplerKernelTests {
             (last, _) = kernel.renderBuffer(4800)
         }
         #expect(rms(last[0...]) < 1e-4)
+    }
+
+    @Test func sameDrainSamplerTapStillProducesAnOnset() {
+        let kernel = makeKernelWithSample()
+        kernel.events.push(.param(.reverbOn, 0))
+        kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 60, vel: 1))
+        kernel.events.push(.noteOff(dest: .sampler, id: 1))
+        let (left, _) = kernel.renderBuffer(240)
+        #expect(rms(left[0...]) > 1e-5)
+    }
+
+    @Test func slotPressureReclaimsAReleasedTailBeforeAHeldSamplerVoice() {
+        let kernel = makeKernelWithSample("English Horn")
+        kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 48, vel: 0.7))
+        _ = kernel.renderBuffer(240)
+
+        for id: Int32 in 2...16 {
+            kernel.events.push(.noteOn(dest: .sampler, id: id, pitch: 72, vel: 1))
+            _ = kernel.renderBuffer(64)
+            kernel.events.push(.noteOff(dest: .sampler, id: id))
+            _ = kernel.renderBuffer(64)
+        }
+        kernel.events.push(.noteOn(dest: .sampler, id: 17, pitch: 76, vel: 1))
+        _ = kernel.renderBuffer(32)
+
+        #expect(kernel.findSampler(1) != nil)
+        _ = kernel.renderBuffer(64)
+        #expect(kernel.findSampler(17) != nil)
     }
 
     @Test func loopingSampleSustains() {
@@ -275,17 +451,31 @@ struct SamplerKernelTests {
         #expect(fresh.first!.pos < 2000)
     }
 
-    @Test func userSampleSelection() {
+    @Test func userSampleSelection() throws {
         let kernel = SynthKernel(sampleRate: SR)
         let registry = SampleRegistry(ring: kernel.events, sampleRate: SR)
         // A 440 Hz beep as the "user file."
         let beep = (0..<Int(SR)).map { Float(sin(Double($0) * 2 * .pi * 440 / SR)) * 0.8 }
-        registry.setUserSample(beep, name: "beep.wav")
+        try registry.setUserSample(beep, name: "beep.wav")
         #expect(registry.userSampleName == "beep.wav")
         registry.select(preset: USER_PRESET, userRoot: 69)
         kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 69, vel: 1))
         let (l, _) = kernel.renderBuffer(9600)
         #expect(rms(l[2400...]) > 0.01)
+    }
+
+    @Test func userSampleRejectsEmptyAndOversizedBuffers() {
+        let kernel = SynthKernel(sampleRate: SR)
+        let registry = SampleRegistry(ring: kernel.events, sampleRate: SR)
+        #expect(throws: SampleRegistry.RegistryError.self) {
+            try registry.setUserSample([], name: "empty.wav")
+        }
+        #expect(throws: SampleRegistry.RegistryError.self) {
+            try registry.setUserSample(
+                [Float](repeating: 0, count: Int(SR * 30) + 1),
+                name: "too-long.wav"
+            )
+        }
     }
 }
 

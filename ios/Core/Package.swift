@@ -10,7 +10,14 @@ let package = Package(
     targets: [
         .target(
             name: "ExpressionPadCore",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+                // The source-node callback has a hard real-time deadline.
+                // Swift's unoptimized Array/bounds/exclusivity checks make the
+                // wavetable + FX kernel several times slower than real time,
+                // even though the surrounding app should remain debuggable.
+                .unsafeFlags(["-O"], .when(configuration: .debug)),
+            ]
         ),
         .testTarget(
             name: "ExpressionPadCoreTests",

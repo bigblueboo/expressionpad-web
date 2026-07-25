@@ -13,6 +13,7 @@ final class AudioEngine: ObservableObject {
 
     private var engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+    private var applicationSuspended = false
 
     var running: Bool { engine.isRunning }
 
@@ -23,9 +24,17 @@ final class AudioEngine: ObservableObject {
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setPreferredSampleRate(48000)
+            #if targetEnvironment(simulator)
+            // Simulator audio shares host scheduling with the debugger and UI.
+            // A 5 ms preference is unnecessarily brittle there, particularly
+            // while rapidly creating release tails. Hardware keeps the lower
+            // touch-to-sound latency below.
+            try session.setPreferredIOBufferDuration(0.010)
+            #else
             // ~240 frames @48 kHz. The web build's AudioContext 'interactive'
             // hint typically lands at 128–256 frames; this matches or beats it.
             try session.setPreferredIOBufferDuration(0.005)
+            #endif
             try session.setActive(true)
         } catch {
             // Session config failure is non-fatal; the engine still runs with defaults.
@@ -63,7 +72,16 @@ final class AudioEngine: ObservableObject {
             guard abl.count >= 2,
                   let l = abl[0].mData?.assumingMemoryBound(to: Float.self),
                   let r = abl[1].mData?.assumingMemoryBound(to: Float.self)
-            else { return noErr }
+            else {
+                // The requested format is planar stereo, but route/graph
+                // failures must produce silence rather than stale audio.
+                for buffer in abl {
+                    buffer.mData?.initializeMemory(
+                        as: UInt8.self, repeating: 0, count: Int(buffer.mDataByteSize)
+                    )
+                }
+                return noErr
+            }
             kernel.render(frames: Int(frameCount), outL: l, outR: r)
             return noErr
         }
@@ -74,8 +92,21 @@ final class AudioEngine: ObservableObject {
 
     /// Idempotent: safe to call on every foregrounding.
     func start() {
+        applicationSuspended = false
         guard !engine.isRunning else { return }
+        try? AVAudioSession.sharedInstance().setActive(true)
         try? engine.start()
+    }
+
+    /// Relinquish the audio session while the app is in the background. This
+    /// app has no background-playback feature, so retaining the session would
+    /// waste power and interfere with the user's other audio.
+    func stop() {
+        applicationSuspended = true
+        if engine.isRunning { engine.stop() }
+        try? AVAudioSession.sharedInstance().setActive(
+            false, options: .notifyOthersOnDeactivation
+        )
     }
 
     private func observeSession() {
@@ -91,8 +122,12 @@ final class AudioEngine: ObservableObject {
                 self.kernel.events.push(.allOff(dest: .synth))
                 self.kernel.events.push(.allOff(dest: .sampler))
             } else if type == .ended {
-                try? AVAudioSession.sharedInstance().setActive(true)
-                if !self.engine.isRunning { try? self.engine.start() }
+                let rawOptions =
+                    note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+                if options.contains(.shouldResume), !self.applicationSuspended {
+                    self.start()
+                }
             }
         }
         center.addObserver(
@@ -100,10 +135,9 @@ final class AudioEngine: ObservableObject {
         ) { [weak self] _ in
             guard let self else { return }
             // The old engine (and its nodes) are dead after a reset; rebuild.
-            try? AVAudioSession.sharedInstance().setActive(true)
             self.engine = AVAudioEngine()
             self.buildGraph()
-            self.start()
+            if !self.applicationSuspended { self.start() }
         }
     }
 
@@ -113,8 +147,22 @@ final class AudioEngine: ObservableObject {
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
 
+        let byteCount = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        if let byteCount, byteCount > 50 * 1024 * 1024 {
+            throw NSError(
+                domain: "expressionpad", code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Sample files must be 50 MB or smaller."]
+            )
+        }
         let file = try AVAudioFile(forReading: url)
         let inFormat = file.processingFormat
+        let duration = Double(file.length) / inFormat.sampleRate
+        guard file.length > 0, duration.isFinite, duration <= 30 else {
+            throw NSError(
+                domain: "expressionpad", code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Samples must contain audio and be 30 seconds or shorter."]
+            )
+        }
         let frames = AVAudioFrameCount(file.length)
         guard let inBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: frames) else {
             throw NSError(domain: "expressionpad", code: 1)
@@ -149,8 +197,11 @@ final class AudioEngine: ObservableObject {
             mono = mixdown(outBuf)
         }
 
+        guard !mono.isEmpty else {
+            throw NSError(domain: "expressionpad", code: 5)
+        }
         let name = url.lastPathComponent
-        sampleRegistry.setUserSample(mono, name: name)
+        try sampleRegistry.setUserSample(mono, name: name)
         if store.state.sampler.preset == USER_PRESET {
             sampleRegistry.select(preset: USER_PRESET, userRoot: store.state.sampler.userRoot)
         }

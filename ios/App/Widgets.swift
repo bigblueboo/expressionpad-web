@@ -52,6 +52,14 @@ struct Knob: View {
         }
         .accessibilityLabel(label)
         .accessibilityValue((fmt ?? percentFmt(min, max))(value))
+        .accessibilityAdjustableAction { direction in
+            let step = (max - min) / 100
+            switch direction {
+            case .increment: value = clamp(value + step, min, max)
+            case .decrement: value = clamp(value - step, min, max)
+            @unknown default: break
+            }
+        }
     }
 
     private var dial: some View {
@@ -96,6 +104,7 @@ struct ToggleSquare: View {
                             .stroke(isOn ? Theme.accent : Theme.accentDim, lineWidth: 1.5)
                     )
                     .frame(width: 34, height: 30)
+                    .frame(minWidth: 44, minHeight: 44)
                     .shadow(color: isOn ? Theme.accent.opacity(0.55) : .clear, radius: 8)
             }
             .buttonStyle(.plain)
@@ -133,6 +142,7 @@ struct SelectMenu<T: Hashable>: View {
                     .lineLimit(1)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
+                    .frame(minHeight: 44)
                     .frame(maxWidth: 120)
                     .background(Theme.widgetBg)
                     .overlay(
@@ -185,6 +195,7 @@ struct StepperControl: View {
                 .font(Theme.font(15))
                 .foregroundColor(Theme.accent)
                 .frame(width: 26, height: 28)
+                .frame(minWidth: 44, minHeight: 44)
                 .background(Theme.widgetBg)
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.accentDim, lineWidth: 1))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
@@ -208,6 +219,7 @@ struct ActionButton: View {
                     .foregroundColor(Theme.accent)
                     .padding(.horizontal, 10)
                     .frame(height: 30)
+                    .frame(minHeight: 44)
                     .background(Theme.widgetBg)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.accentDim, lineWidth: 1.5))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -245,9 +257,10 @@ struct PanelGroup<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
+        FlowLayout(spacing: 10) {
             content
         }
+        .frame(maxWidth: 340, alignment: .leading)
         .padding(.init(top: 12, leading: 8, bottom: 6, trailing: 8))
         .background(Theme.groupBg)
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line, lineWidth: 1))
@@ -297,20 +310,24 @@ struct FlowLayout: SwiftUI.Layout {
         var y = bounds.minY
         for row in rows {
             var x = bounds.minX
-            for index in row.indexes {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(
+            for item in row.items {
+                subviews[item.index].place(
                     at: CGPoint(x: x, y: y),
-                    proposal: ProposedViewSize(size)
+                    proposal: ProposedViewSize(item.size)
                 )
-                x += size.width + spacing
+                x += item.size.width + spacing
             }
             y += row.height + spacing
         }
     }
 
+    private struct Item {
+        var index: Int
+        var size: CGSize
+    }
+
     private struct Row {
-        var indexes: [Int] = []
+        var items: [Item] = []
         var width: CGFloat = 0
         var height: CGFloat = 0
     }
@@ -319,17 +336,25 @@ struct FlowLayout: SwiftUI.Layout {
         var rows: [Row] = []
         var current = Row()
         for (index, view) in subviews.enumerated() {
-            let size = view.sizeThatFits(.unspecified)
+            // A child can wrap and become taller once constrained (notably a
+            // PanelGroup's own flow). Measure it with the width it will
+            // actually receive; measuring only `.unspecified` makes the outer
+            // layout reserve the child's single-row height and causes overlap.
+            let natural = view.sizeThatFits(.unspecified)
+            let childWidth = min(natural.width, maxWidth)
+            let size = view.sizeThatFits(
+                ProposedViewSize(width: childWidth, height: nil)
+            )
             let needed = current.width + (current.width > 0 ? spacing : 0) + size.width
-            if !current.indexes.isEmpty && needed > maxWidth {
+            if !current.items.isEmpty && needed > maxWidth {
                 rows.append(current)
                 current = Row()
             }
             current.width += (current.width > 0 ? spacing : 0) + size.width
             current.height = max(current.height, size.height)
-            current.indexes.append(index)
+            current.items.append(Item(index: index, size: size))
         }
-        if !current.indexes.isEmpty { rows.append(current) }
+        if !current.items.isEmpty { rows.append(current) }
         return rows
     }
 }

@@ -25,11 +25,13 @@ final class PadSurfaceView: UIView {
     private var keyboard: KeyboardInput!
 
     private var displayLink: CADisplayLink?
+    private var displayLinkProxy: PadDisplayLinkProxy?
     private var lastFrame = CACurrentMediaTime()
     private var touchIds: [UITouch: Int] = [:]
     private var nextTouchId = 1
     private var builtSize = CGSize.zero
     private var unsubscribe: (() -> Void)?
+    private var accessibilityNoteId = 2_000_000
 
     init(store: Store, sink: VoiceSink) {
         self.store = store
@@ -63,9 +65,14 @@ final class PadSurfaceView: UIView {
             }
         }
 
-        let link = CADisplayLink(target: self, selector: #selector(tick))
+        let proxy = PadDisplayLinkProxy(view: self)
+        let link = CADisplayLink(target: proxy, selector: #selector(PadDisplayLinkProxy.tick))
+        link.preferredFrameRateRange = CAFrameRateRange(
+            minimum: 60, maximum: 120, preferred: 120
+        )
         link.add(to: .main, forMode: .common)
         link.isPaused = true
+        displayLinkProxy = proxy
         displayLink = link
     }
 
@@ -109,17 +116,48 @@ final class PadSurfaceView: UIView {
         builtSize = bounds.size
         layout = buildLayout(PadSurfaceView.layoutParams(store, bounds.width, bounds.height))
         field = BrightnessField(layout.keys)
+        rebuildAccessibilityElements()
+    }
+
+    private func rebuildAccessibilityElements() {
+        isAccessibilityElement = false
+        accessibilityElements = layout.keys.map { key in
+            let element = PadKeyAccessibilityElement(accessibilityContainer: self)
+            element.accessibilityLabel = noteName(key.note, withOctave: true)
+            element.accessibilityHint = "Double tap to play"
+            element.accessibilityTraits = [.button, .playsSound]
+            element.accessibilityFrameInContainerSpace = CGRect(
+                x: key.x, y: key.y, width: key.w, height: key.h
+            )
+            element.activate = { [weak self] in
+                guard let self else { return false }
+                accessibilityNoteId += 1
+                let id = accessibilityNoteId
+                tracker.down(id, key.cx, key.cy)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+                    self?.tracker.up(id)
+                }
+                return true
+            }
+            return element
+        }
     }
 
     // ---------------------------------------------------------- animation ---
 
     private func requestRender() {
         setNeedsDisplay()
-        displayLink?.isPaused = false
-        lastFrame = CACurrentMediaTime()
+        // Touch input can arrive as a 120 Hz batch of coalesced samples. Do
+        // not reset the simulation clock for every sample: doing so makes the
+        // next display-link dt approach zero, visually stalling the wave while
+        // new impulses accumulate. Reset only when waking a paused clock.
+        if displayLink?.isPaused == true {
+            lastFrame = CACurrentMediaTime()
+            displayLink?.isPaused = false
+        }
     }
 
-    @objc private func tick() {
+    @objc fileprivate func tick() {
         let now = CACurrentMediaTime()
         let dt = min(0.08, max(0, now - lastFrame))
         lastFrame = now
@@ -320,6 +358,26 @@ final class PadSurfaceView: UIView {
         ctx.addPath(path.cgPath)
         ctx.drawPath(using: .fillStroke)
         ctx.restoreGState()
+    }
+}
+
+private final class PadDisplayLinkProxy: NSObject {
+    weak var view: PadSurfaceView?
+
+    init(view: PadSurfaceView) {
+        self.view = view
+    }
+
+    @objc func tick() {
+        view?.tick()
+    }
+}
+
+private final class PadKeyAccessibilityElement: UIAccessibilityElement {
+    var activate: (() -> Bool)?
+
+    override func accessibilityActivate() -> Bool {
+        activate?() ?? false
     }
 }
 

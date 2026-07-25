@@ -91,6 +91,7 @@ public struct Distortion {
     var upState = [Float](repeating: 0, count: Distortion.taps.count)
     var downState = [Float](repeating: 0, count: Distortion.taps.count)
     var k: Float = 1 + 0.3 * 30
+    var shapeNorm: Float = 1 / tanh(1 + 0.3 * 30)
     var wet = OnePole(0)
     var dry = OnePole(1)
     var wetGain: Float = 0
@@ -99,7 +100,11 @@ public struct Distortion {
     public init() {}
 
     public mutating func update(dt: Float, amt: Float, on: Bool) {
-        k = 1 + clamp(amt, 0, 1) * 30
+        let nextK = 1 + clamp(amt, 0, 1) * 30
+        if nextK != k {
+            k = nextK
+            shapeNorm = 1 / tanh(k)
+        }
         let alpha = smoothingAlpha(dt: dt, tau: 0.02)
         wet.target = on ? 1 : 0
         dry.target = on ? 0 : 1
@@ -116,10 +121,17 @@ public struct Distortion {
     }
 
     func shape(_ x: Float) -> Float {
-        tanh(k * x) / tanh(k)
+        tanh(k * x) * shapeNorm
     }
 
     public mutating func process(_ x: Float) -> Float {
+        // The dry insert still receives every sample, but once its 20 ms
+        // crossfade has reached zero there is no reason to run four FIR passes
+        // and two tanh calls. Resume processing immediately when ON is targeted
+        // so the oversampling filters warm up underneath the wet fade.
+        if wet.target == 0, wetGain < 1e-5 {
+            return x
+        }
         // Upsample 2× (zero-stuff → half-band, ×2 gain), shape, filter, decimate.
         let u0 = Distortion.fir(x * 2, &upState)
         let u1 = Distortion.fir(0, &upState)
@@ -128,6 +140,11 @@ public struct Distortion {
         let d0 = Distortion.fir(s0, &downState)
         _ = Distortion.fir(s1v, &downState)
         return x * dryGain + d0 * wetGain
+    }
+
+    public mutating func reset() {
+        upState.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
+        downState.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
     }
 }
 
@@ -175,6 +192,11 @@ public struct FeedbackDelay {
         writeIdx += 1
         if writeIdx == n { writeIdx = 0 }
         return x + out * wet
+    }
+
+    public mutating func reset() {
+        buffer.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
+        writeIdx = 0
     }
 }
 
@@ -242,24 +264,33 @@ public struct FDNReverb {
         out.l = (read[0] - read[2] + read[4] - read[6]) * 0.6
         out.r = (read[1] - read[3] + read[5] - read[7]) * 0.6
     }
+
+    public mutating func reset() {
+        for i in lines.indices {
+            lines[i].withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
+        }
+        idx.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
+        damp.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
+        read.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0) }
+    }
 }
 
 // --------------------------------------------------------------- limiter ---
 
 /// The Web Audio DynamicsCompressor static curve (threshold −3 dB, knee 6,
-/// ratio 12, attack 2 ms, release 100 ms) with its spec makeup gain, minus
-/// the node's ~6 ms lookahead delay.
+/// ratio 12, release 100 ms) with its spec makeup gain. Web Audio uses
+/// lookahead to catch a transient before it reaches the output; this real-time
+/// kernel cannot see future samples, so its detector attacks immediately and
+/// applies a final 0.98 safety ceiling instead.
 public struct Limiter {
     let thresholdDb: Float = -3
     let kneeDb: Float = 6
     let ratio: Float = 12
-    var attackCoef: Float
     var releaseCoef: Float
     var envelope: Float = 0
     let makeup: Float
 
     public init(sampleRate: Float) {
-        attackCoef = exp(-1 / (0.002 * sampleRate))
         releaseCoef = exp(-1 / (0.1 * sampleRate))
         // Spec makeup: (1 / gain-at-0dBFS)^0.6.
         let g0 = Limiter.staticGainDb(0, threshold: -3, knee: 6, ratio: 12)
@@ -279,13 +310,24 @@ public struct Limiter {
 
     public mutating func process(l: inout Float, r: inout Float) {
         let peak = max(abs(l), abs(r))
-        // Envelope follower in linear domain (attack when rising).
-        let coef = peak > envelope ? attackCoef : releaseCoef
-        envelope = peak + coef * (envelope - peak)
+        // Instant attack substitutes for the Web Audio node's lookahead;
+        // release remains smooth so gain does not chatter after a transient.
+        if peak > envelope {
+            envelope = peak
+        } else {
+            envelope = peak + releaseCoef * (envelope - peak)
+        }
         let levelDb = 20 * log10(max(envelope, 1e-6))
         let gainDb = Limiter.staticGainDb(levelDb, threshold: thresholdDb, knee: kneeDb, ratio: ratio)
-        let gain = pow(10, gainDb / 20) * makeup
+        var gain = pow(10, gainDb / 20) * makeup
+        if peak * gain > 0.98 {
+            gain = 0.98 / peak
+        }
         l *= gain
         r *= gain
+    }
+
+    public mutating func reset() {
+        envelope = 0
     }
 }

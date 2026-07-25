@@ -24,7 +24,7 @@ body {
   color: var(--text);
   font-family: var(--font);
   overscroll-behavior: none;
-  touch-action: none;
+  touch-action: pinch-zoom;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -180,8 +180,8 @@ body {
 
 .knob {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -321,6 +321,31 @@ body {
   display: block;
 }
 
+/* Screen-reader-operable mirror of the canvas note grid. */
+.pad-accessible-keys {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (pointer: coarse) {
+  .tab,
+  .chevron,
+  .toggle,
+  .select,
+  .stepper-btn,
+  .action-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 /* Portrait: tighter top bar so the pad keeps room. */
 @media (orientation: portrait) and (max-width: 600px) {
   .brand {
@@ -339,6 +364,8 @@ body {
 
 @media (max-height: 420px) {
   .panel {
-    max-height: 70dvh;
+    /* Keep a genuinely playable surface in phone landscape. The panel
+       remains scrollable, so dense synth pages do not consume the viewport. */
+    max-height: 40dvh;
   }
 }

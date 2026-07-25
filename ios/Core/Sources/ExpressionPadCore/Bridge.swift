@@ -2,6 +2,7 @@
 /// note events into the ring, the store→param adapter (the port of
 /// engine.ts applyParams), the wavetable pool, and the sample registry.
 import Foundation
+import Synchronization
 
 /// A VoiceSink that forwards to one kernel destination through the ring.
 public final class KernelVoiceSink: VoiceSink {
@@ -34,30 +35,44 @@ public final class KernelVoiceSink: VoiceSink {
     }
 }
 
-/// Round-robin pool of wavetable slabs for one generator. The main thread
-/// builds into the next slab and passes the pointer through the ring; with
-/// 8 slabs the kernel (draining every ~5 ms) has long since moved on before
-/// a slab is reused.
+/// Fixed pool of wavetable slabs for one generator. A slab moves through
+/// free → queued → current → free. The producer never writes a queued/current
+/// slab, so the audio thread always reads an immutable table.
 public final class WavetablePool {
     static let slabs = 8
     private let memory: UnsafeMutablePointer<Float>
-    private var next = 0
+    private let states: UnsafeMutablePointer<Atomic<Int>>
+    private var searchStart = 0
 
     public init() {
         memory = .allocate(capacity: Wavetable.totalSize * WavetablePool.slabs)
         memory.initialize(repeating: 0, count: Wavetable.totalSize * WavetablePool.slabs)
+        states = .allocate(capacity: WavetablePool.slabs)
+        for i in 0..<WavetablePool.slabs {
+            (states + i).initialize(to: Atomic<Int>(0))
+        }
     }
 
     deinit {
+        states.deinitialize(count: WavetablePool.slabs)
+        states.deallocate()
         memory.deallocate()
     }
 
-    /// Build tables for (morph, bright) and return a kernel-lifetime pointer.
-    public func build(morph: Double, bright: Double) -> UnsafePointer<Float> {
-        let slab = memory + next * Wavetable.totalSize
-        next = (next + 1) % WavetablePool.slabs
-        Wavetable.build(morph: morph, bright: bright, into: slab)
-        return UnsafePointer(slab)
+    /// Build into a free slab. If the consumer is too far behind, coalesce by
+    /// declining this intermediate update instead of corrupting a live table.
+    public func build(morph: Double, bright: Double) -> WavetablePublication? {
+        for offset in 0..<WavetablePool.slabs {
+            let index = (searchStart + offset) % WavetablePool.slabs
+            let state = states + index
+            guard state.pointee.load(ordering: .acquiring) == 0 else { continue }
+            let slab = memory + index * Wavetable.totalSize
+            Wavetable.build(morph: morph, bright: bright, into: slab)
+            state.pointee.store(1, ordering: .releasing)
+            searchStart = (index + 1) % WavetablePool.slabs
+            return WavetablePublication(table: UnsafePointer(slab), state: state)
+        }
+        return nil
     }
 }
 
@@ -66,10 +81,28 @@ public final class WavetablePool {
 /// may hold a pointer for as long as its release tail runs, and the total is
 /// bounded (6 built-ins + user loads) for the life of the process.
 public final class SampleRegistry {
+    public enum RegistryError: LocalizedError {
+        case emptySample
+        case sampleTooLong
+        case sessionMemoryLimit
+
+        public var errorDescription: String? {
+            switch self {
+            case .emptySample: "The sample contains no audio."
+            case .sampleTooLong: "Samples must be 30 seconds or shorter."
+            case .sessionMemoryLimit: "The sample session limit has been reached. Restart the app to load more."
+            }
+        }
+    }
+
     let ring: EventRing
     public let sampleRate: Double
     private var builtins: [String: SampleRef] = [:]
     private var user: (name: String, data: UnsafePointer<Float>, count: Int)?
+    private var allocations: [UnsafeMutablePointer<Float>] = []
+    private var userFramesPinned = 0
+    private var maxUserFrames: Int { Int(sampleRate * 30) }
+    private var maxSessionUserFrames: Int { Int(sampleRate * 120) }
 
     public init(ring: EventRing, sampleRate: Double) {
         self.ring = ring
@@ -78,15 +111,24 @@ public final class SampleRegistry {
 
     public var userSampleName: String? { user?.name }
 
-    private func pin(_ data: [Float]) -> UnsafePointer<Float> {
-        let mem = UnsafeMutablePointer<Float>.allocate(capacity: max(1, data.count))
+    private func pin(_ data: [Float]) -> UnsafePointer<Float>? {
+        guard !data.isEmpty else { return nil }
+        let mem = UnsafeMutablePointer<Float>.allocate(capacity: data.count)
         data.withUnsafeBufferPointer { mem.update(from: $0.baseAddress!, count: data.count) }
+        allocations.append(mem)
         return UnsafePointer(mem)
     }
 
     /// Store a decoded user sample (mono, engine sample rate).
-    public func setUserSample(_ data: [Float], name: String) {
-        user = (name, pin(data), data.count)
+    public func setUserSample(_ data: [Float], name: String) throws {
+        guard !data.isEmpty else { throw RegistryError.emptySample }
+        guard data.count <= maxUserFrames else { throw RegistryError.sampleTooLong }
+        guard userFramesPinned + data.count <= maxSessionUserFrames else {
+            throw RegistryError.sessionMemoryLimit
+        }
+        guard let pointer = pin(data) else { throw RegistryError.emptySample }
+        userFramesPinned += data.count
+        user = (name, pointer, data.count)
     }
 
     /// Render/cache the preset and point the kernel at it.
@@ -103,8 +145,9 @@ public final class SampleRegistry {
         var ref = builtins[name]
         if ref == nil {
             let r = renderSample(name, sampleRate)
+            guard let pointer = pin(r.data) else { return }
             ref = SampleRef(
-                data: pin(r.data), count: Int32(r.data.count), root: Float(r.root),
+                data: pointer, count: Int32(r.data.count), root: Float(r.root),
                 loopStart: Int32(r.loopStart ?? -1), loopEnd: Int32(r.loopEnd ?? -1)
             )
             builtins[name] = ref
@@ -183,8 +226,15 @@ public final class StoreKernelBridge {
 
     func pushWavetables() {
         let s = store.state.synth
-        ring.push(.wavetable(gen: 0, table: pool1.build(morph: s.gen1.morph, bright: s.bright)))
-        ring.push(.wavetable(gen: 1, table: pool2.build(morph: s.gen2.morph, bright: s.bright)))
+        publish(pool1.build(morph: s.gen1.morph, bright: s.bright), gen: 0)
+        publish(pool2.build(morph: s.gen2.morph, bright: s.bright), gen: 1)
+    }
+
+    private func publish(_ publication: WavetablePublication?, gen: Int32) {
+        guard let publication else { return }
+        if !ring.push(.wavetable(gen: gen, publication: publication)) {
+            publication.retire()
+        }
     }
 
     public func pushAll() {

@@ -96,6 +96,20 @@ describe('TouchTracker', () => {
     expect(glides[glides.length - 1][2]).toBeCloseTo(49, 1)
   })
 
+  it('does not inject new ripple energy while continuously crossing keys', () => {
+    pad.slide = 0.5
+    const triggered: number[] = []
+    tracker = new TouchTracker(
+      () => layout, () => pad, sink, () => {}, (key) => triggered.push(key.id),
+    )
+    tracker.down(1, 50, 390)
+    tracker.move(1, 150, 390)
+    tracker.move(1, 250, 390)
+    tracker.move(1, 350, 390)
+    expect(triggered).toHaveLength(1)
+    expect(sink.ofType('glide').length).toBeGreaterThan(0)
+  })
+
   it('produces fractional pitches mid-key while sliding', () => {
     pad.slide = 0.5
     tracker.down(1, 50, 390)
@@ -116,13 +130,19 @@ describe('TouchTracker', () => {
     }
   })
 
-  it('locks slide pitch to the origin row', () => {
+  it('glides across rows without retriggering the voice', () => {
     pad.slide = 0.5
     tracker.down(1, 50, 390) // bottom row
     tracker.move(1, 50, 10) // drag to top row
-    // Pitch should stay near the origin row's pitch (48), not jump +15.
     const glides = sink.ofType('glide')
-    for (const g of glides) expect(g[2]).toBeLessThan(50)
+    expect(glides[glides.length - 1]).toEqual(['glide', 1, 63])
+    expect(sink.ofType('on')).toHaveLength(1)
+    expect(sink.ofType('off')).toHaveLength(0)
+    expect(tracker.active.get(1)?.key.row).toBe(3)
+
+    tracker.move(1, 50, 390) // glide back to the bottom row
+    expect(sink.ofType('glide').at(-1)).toEqual(['glide', 1, 48])
+    expect(sink.ofType('on')).toHaveLength(1)
   })
 
   it('derives velocity from vertical position when touchVel is on', () => {

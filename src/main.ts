@@ -67,6 +67,10 @@ const localVoice: VoiceSink = {
   },
 }
 const midiIn = new MidiIn(store, localVoice)
+midiOut.onDevicesChanged(() => {
+  if (midiOut.access && store.state.midi.inEnabled) midiIn.attach(midiOut.access)
+  else midiIn.detach()
+})
 store.subscribe((_s, path) => {
   if ((path === 'midi.inEnabled' || path === 'midi.inputId') && midiOut.access) {
     if (store.state.midi.inEnabled) midiIn.attach(midiOut.access)
@@ -80,18 +84,9 @@ window.addEventListener('pointerdown', wake, { passive: true })
 
 // Silence everything if the tab is hidden mid-performance.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) router.allOff()
+  if (document.hidden) {
+    router.allOff()
+    store.flushSave()
+  }
 })
-
-// Block double-tap zoom and pinch gestures on iOS Safari.
-document.addEventListener('gesturestart', (e) => e.preventDefault())
-let lastTouchEnd = 0
-document.addEventListener(
-  'touchend',
-  (e) => {
-    const now = Date.now()
-    if (now - lastTouchEnd < 350) e.preventDefault()
-    lastTouchEnd = now
-  },
-  { passive: false },
-)
+window.addEventListener('pagehide', () => store.flushSave())

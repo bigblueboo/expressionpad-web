@@ -1,18 +1,16 @@
 #!/bin/sh
-# Run the core test suite on macOS without needing `sudo xcodebuild -license`:
-# invokes the Xcode toolchain's SwiftPM directly (no xcrun license shim) and
-# points it at the platform's swift-testing framework.
-#
-# Once the Xcode license is accepted, plain `swift test` works too.
+# Run the core test suite with a compiler and SDK from the same selected Xcode.
 set -e
 cd "$(dirname "$0")"
 
-XCODE=${XCODE:-/Users/cdeck/Applications/Xcode-16.4.0.app}
-TOOLCHAIN="$XCODE/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
-XCPLAT="$XCODE/Contents/Developer/Platforms/MacOSX.platform/Developer"
+if [ -n "${XCODE:-}" ]; then
+  DEVELOPER_DIR="$XCODE/Contents/Developer"
+  export DEVELOPER_DIR
+fi
 
-exec "$TOOLCHAIN/swift-test" --disable-xctest --enable-swift-testing \
-  -Xswiftc -F -Xswiftc "$XCPLAT/Library/Frameworks" \
-  -Xlinker -F -Xlinker "$XCPLAT/Library/Frameworks" \
-  -Xlinker -rpath -Xlinker "$XCPLAT/Library/Frameworks" \
-  "$@"
+SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+SWIFT=$(xcrun --find swift)
+
+"$SWIFT" --version
+echo "SDK: $SDKROOT"
+exec "$SWIFT" test -Xswiftc -sdk -Xswiftc "$SDKROOT" "$@"

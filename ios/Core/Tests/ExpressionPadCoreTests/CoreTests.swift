@@ -107,7 +107,9 @@ struct MidiMathTests {
         let alloc = ChannelAllocator()
         for i in 0..<15 { _ = alloc.acquire(i) }
         let oldest = alloc.channelOf(0)!
-        #expect(alloc.acquire(99) == oldest)
+        let allocation = alloc.acquireWithEviction(99)
+        #expect(allocation.channel == oldest)
+        #expect(allocation.evictedId == 0)
         #expect(alloc.channelOf(0) == nil)
     }
 }
@@ -163,6 +165,32 @@ struct StateTests {
         #expect(store.state == defaultState())
     }
 
+    @Test func invalidNumericRangesAreSanitizedPerLeaf() {
+        let json = """
+        {
+          "pad": {"rows": 0, "cols": 100, "rowTuning": "garbage"},
+          "midi": {"bendRange": 0},
+          "appearance": {"brightness": 20}
+        }
+        """.data(using: .utf8)!
+        let store = Store.load(from: json)
+        #expect(store.state.pad.rows == 1)
+        #expect(store.state.pad.cols == 24)
+        #expect(store.state.pad.rowTuning == "Fourths [+5]")
+        #expect(store.state.midi.bendRange == 1)
+        #expect(store.state.appearance.brightness == 1)
+    }
+
+    @Test func flushSavePersistsImmediately() throws {
+        let store = Store()
+        var saved: Data?
+        store.saver = { saved = $0 }
+        store.set(\.pad.rows, 7)
+        store.flushSave()
+        let state = try JSONDecoder().decode(AppState.self, from: saved!)
+        #expect(state.pad.rows == 7)
+    }
+
     @Test func applyPresetPatchesLeaves() {
         let store = Store()
         var paths: [String] = []
@@ -179,6 +207,15 @@ struct StateTests {
         for name in PRESET_NAMES {
             #expect(SYNTH_PRESETS[name] != nil, "\(name)")
         }
+    }
+
+    @Test func defaultStateMatchesSelectedSuperSinePatch() {
+        let state = defaultState()
+        let preset = SYNTH_PRESETS["Super Sine"]!
+        #expect(state.synth.gen1 == preset.gen1)
+        #expect(state.synth.gen2 == preset.gen2)
+        #expect(state.synth.env == preset.env)
+        #expect(state.synth.filter == preset.filter)
     }
 }
 

@@ -11,6 +11,11 @@ public func bendBytes(_ semitones: Double, _ range: Double) -> (lsb: UInt8, msb:
 
 /// Rotating member-channel allocator (channels 1–15, zero-indexed; 0 is the MPE master).
 public final class ChannelAllocator {
+    public struct Allocation: Equatable, Sendable {
+        public var channel: Int
+        public var evictedId: Int?
+    }
+
     private var free: [Int] = []
     private var held: [(id: Int, channel: Int)] = [] // insertion-ordered
 
@@ -19,10 +24,17 @@ public final class ChannelAllocator {
     }
 
     public func acquire(_ id: Int) -> Int {
-        if let existing = held.first(where: { $0.id == id })?.channel { return existing }
-        let ch = free.isEmpty ? oldestHeldChannel() : free.removeFirst()
+        acquireWithEviction(id).channel
+    }
+
+    public func acquireWithEviction(_ id: Int) -> Allocation {
+        if let existing = held.first(where: { $0.id == id })?.channel {
+            return Allocation(channel: existing, evictedId: nil)
+        }
+        let stolen = free.isEmpty ? oldestHeld() : nil
+        let ch = free.isEmpty ? stolen!.channel : free.removeFirst()
         held.append((id, ch))
-        return ch
+        return Allocation(channel: ch, evictedId: stolen?.id)
     }
 
     @discardableResult
@@ -37,8 +49,8 @@ public final class ChannelAllocator {
         held.first(where: { $0.id == id })?.channel
     }
 
-    private func oldestHeldChannel() -> Int {
-        guard !held.isEmpty else { return 1 }
-        return held.removeFirst().channel
+    private func oldestHeld() -> (id: Int, channel: Int) {
+        guard !held.isEmpty else { return (-1, 1) }
+        return held.removeFirst()
     }
 }
