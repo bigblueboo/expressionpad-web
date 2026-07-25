@@ -18,11 +18,19 @@ struct PadView: UIViewRepresentable {
 }
 
 final class PadSurfaceView: UIView {
+    /// Pad paths whose change alters key geometry and forces a layout rebuild.
+    private static let geometryPaths: Set<String> = [
+        "pad.layout", "pad.rows", "pad.cols", "pad.rowTuning", "pad.colScale",
+        "pad.baseNote", "pad.mirror", "pad.mirrorOffset",
+    ]
+
     private let store: Store
     private var layout: ExpressionPadCore.Layout
     private var field: BrightnessField
     private(set) var tracker: TouchTracker!
     private var keyboard: KeyboardInput!
+    private let haptics = UIImpactFeedbackGenerator(style: .light)
+    private var lastHaptic: CFTimeInterval = 0
 
     private var displayLink: CADisplayLink?
     private var displayLinkProxy: PadDisplayLinkProxy?
@@ -53,14 +61,17 @@ final class PadSurfaceView: UIView {
             // lattice — at event time, so even sub-frame taps make a splash.
             onTrigger: { [unowned self] key in
                 if self.store.state.appearance.ripples { self.field.poke(key.id, 1.3) }
-            }
+            },
+            onFret: { [unowned self] in self.hapticTick() }
         )
         keyboard = KeyboardInput(getLayout: { [unowned self] in self.layout }, tracker: tracker)
 
         unsubscribe = store.subscribe { [weak self] _, path in
             guard let self else { return }
             if path.hasPrefix("pad") || path.hasPrefix("appearance") {
-                if path.hasPrefix("pad") && !path.contains("slide") { self.rebuild() }
+                // Only geometry changes rebuild (and thus cancel held touches);
+                // performance knobs like slide/vib/haptic just repaint.
+                if Self.geometryPaths.contains(path) { self.rebuild() }
                 self.requestRender()
             }
         }
@@ -96,8 +107,20 @@ final class PadSurfaceView: UIView {
             height: height,
             baseNote: pad.baseNote,
             rowOffsets: rowOffsets(pad.rowTuning, rows),
-            scale: SCALES[pad.colScale] ?? SCALES["Chromatic"]!
+            scale: SCALES[pad.colScale] ?? SCALES["Chromatic"]!,
+            mirror: pad.mirror,
+            mirrorOffset: pad.mirrorOffset
         )
+    }
+
+    /// Short haptic tick on fret crossings, scaled by the HAPTIC knob.
+    private func hapticTick() {
+        let amt = store.state.pad.haptics
+        guard amt > 0 else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastHaptic >= 0.04 else { return }
+        lastHaptic = now
+        haptics.impactOccurred(intensity: 0.3 + 0.7 * amt)
     }
 
     override func layoutSubviews() {
@@ -172,6 +195,8 @@ final class PadSurfaceView: UIView {
     // ------------------------------------------------------------ touches ---
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // Keep the Taptic Engine warm so fret ticks land without latency.
+        if store.state.pad.haptics > 0 { haptics.prepare() }
         for t in touches {
             nextTouchId += 1
             touchIds[t] = nextTouchId
@@ -315,6 +340,15 @@ final class PadSurfaceView: UIView {
                     withAttributes: attrs
                 )
             }
+        }
+
+        // Mark the mirror seam so each thumb knows its half.
+        if layout.mirrored {
+            ctx.setStrokeColor(UIColor(Theme.accent).withAlphaComponent(0.22).cgColor)
+            ctx.setLineWidth(2)
+            ctx.move(to: CGPoint(x: bounds.midX, y: 0))
+            ctx.addLine(to: CGPoint(x: bounds.midX, y: bounds.height))
+            ctx.strokePath()
         }
     }
 

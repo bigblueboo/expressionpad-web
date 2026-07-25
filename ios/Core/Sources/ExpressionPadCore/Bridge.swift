@@ -156,6 +156,25 @@ public final class SampleRegistry {
     }
 }
 
+/// Kernel-side codes for the expression routing enums (ParamID payloads).
+private func pressureCode(_ target: PressureTarget) -> Float {
+    switch target {
+    case .filter: 0
+    case .level: 1
+    case .lfo: 2
+    case .off: 3
+    }
+}
+
+private func tiltCode(_ target: TiltTarget) -> Float {
+    switch target {
+    case .off: 0
+    case .filter: 1
+    case .level: 2
+    case .lfo: 3
+    }
+}
+
 /// Subscribes to the store and keeps the kernel in sync — the port of
 /// engine.ts applyParams + rebuildWaves and sampler.ts's level/preset logic.
 public final class StoreKernelBridge {
@@ -210,6 +229,9 @@ public final class StoreKernelBridge {
         "sampler.release": (.samplerRelease, { Float($0.sampler.release) }),
         "sampler.retrig": (.samplerRetrig, { $0.sampler.retrig ? 1 : 0 }),
         "pad.slide": (.slide, { Float($0.pad.slide) }),
+        "expr.pressure": (.exprPressure, { pressureCode($0.expr.pressure) }),
+        "expr.tilt": (.exprTilt, { tiltCode($0.expr.tilt) }),
+        "expr.tiltAmount": (.exprTiltAmount, { Float($0.expr.tiltAmount) }),
     ]
 
     func onChange(_ path: String) {

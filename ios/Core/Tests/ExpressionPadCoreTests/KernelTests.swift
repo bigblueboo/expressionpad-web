@@ -522,3 +522,67 @@ struct BridgeTests {
         #expect(kernel.currentSample.loopStart == -1) // pluck is one-shot
     }
 }
+
+struct ExpressionRoutingTests {
+    @Test func pressureToLevelSwellsFromTheFloor() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.exprPressure, 1)) // level
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        _ = kernel.renderBuffer(9600) // settle attack at the floor
+        let (quiet, _) = kernel.renderBuffer(4800)
+        kernel.events.push(.pressure(dest: .synth, id: 1, value: 1))
+        _ = kernel.renderBuffer(9600) // let the swell settle
+        let (loud, _) = kernel.renderBuffer(4800)
+        #expect(allFinite(loud))
+        #expect(rms(loud[...]) > rms(quiet[...]) * 2)
+    }
+
+    @Test func tiltToLevelDucksTheSharedBus() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.exprTilt, 2)) // level
+        kernel.events.push(.param(.exprTiltAmount, 1))
+        kernel.events.push(.param(.tilt, 0)) // flat → silent at full amount
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        _ = kernel.renderBuffer(9600)
+        let (ducked, _) = kernel.renderBuffer(4800)
+        kernel.events.push(.param(.tilt, 1)) // upright → full level
+        _ = kernel.renderBuffer(9600)
+        let (full, _) = kernel.renderBuffer(4800)
+        #expect(allFinite(full))
+        #expect(rms(full[...]) > rms(ducked[...]) * 3)
+    }
+
+    @Test func pressureOffLeavesTheVoiceAlone() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.exprPressure, 3)) // off
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        _ = kernel.renderBuffer(48000) // settle into sustain
+        let (before, _) = kernel.renderBuffer(4800)
+        kernel.events.push(.pressure(dest: .synth, id: 1, value: 1))
+        _ = kernel.renderBuffer(9600)
+        let (after, _) = kernel.renderBuffer(4800)
+        let ratio = rms(after[...]) / max(1e-9, rms(before[...]))
+        #expect(ratio > 0.8 && ratio < 1.25)
+    }
+
+    @Test func samplerPressureToLevelSwells() {
+        let kernel = SynthKernel(sampleRate: SR)
+        // A constant-ish looped sample so gain changes dominate the RMS.
+        let data = [Float](repeating: 0.5, count: 4800)
+        data.withUnsafeBufferPointer { buf in
+            kernel.events.push(.sample(SampleRef(
+                data: buf.baseAddress!, count: 4800, root: 60, loopStart: 0, loopEnd: 4800
+            )))
+            kernel.events.push(.param(.exprPressure, 1)) // level
+            kernel.events.push(.param(.reverbOn, 0))
+            kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 60, vel: 1))
+            _ = kernel.renderBuffer(9600)
+            let (quiet, _) = kernel.renderBuffer(4800)
+            kernel.events.push(.pressure(dest: .sampler, id: 1, value: 1))
+            _ = kernel.renderBuffer(9600)
+            let (loud, _) = kernel.renderBuffer(4800)
+            #expect(allFinite(loud))
+            #expect(rms(loud[...]) > rms(quiet[...]) * 2)
+        }
+    }
+}

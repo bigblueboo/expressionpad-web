@@ -62,3 +62,7 @@ app (mode of expression, LLC; released 2017-09-12, last update 1.3.1,
 - Ripples are a brightness wave propagating key-to-key through the lattice
   (damped wave + viscosity, shallow-water style) rather than a drawn circle —
   every note onset drops a "pebble" and the glow spreads to neighbor keys.
+- Additions beyond the original: MIRROR two-thumb split (surface reflected
+  down the middle, right half pitch-offsettable), VIB in-key vibrato with
+  spring-back, HAPTIC fret-crossing ticks, and an EXPRESSION routing group
+  (pressure → filter/level/LFO; device tilt → filter/level/LFO with amount).

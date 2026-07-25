@@ -26,6 +26,27 @@ public struct PadConfig: Codable, Equatable, Sendable {
     public var touchVel: Bool
     /// Vertical drag after onset modulates pressure/timbre.
     public var aftertouch: Bool
+    /// Mirror the surface down the middle for two-thumb play.
+    public var mirror: Bool
+    /// Semitone offset applied to the mirrored (right) half.
+    public var mirrorOffset: Int
+    /// In-key vibrato depth: horizontal wiggle bends up to this many semitones.
+    public var vibrato: Double
+    /// Haptic tick strength on fret/semitone crossings, 0 = off.
+    public var haptics: Double
+}
+
+/// Where the continuous performance axes are routed.
+public enum PressureTarget: String, Codable, Sendable { case filter, level, lfo, off }
+public enum TiltTarget: String, Codable, Sendable { case off, filter, level, lfo }
+
+public struct ExprConfig: Codable, Equatable, Sendable {
+    /// Destination for touch pressure (aftertouch).
+    public var pressure: PressureTarget
+    /// Destination for device tilt.
+    public var tilt: TiltTarget
+    /// Tilt modulation amount 0..1.
+    public var tiltAmount: Double
 }
 
 public struct GenConfig: Codable, Equatable, Sendable {
@@ -143,6 +164,7 @@ public struct AppState: Codable, Equatable, Sendable {
     /// Which local sound source touches play — synth or sampler.
     public var voice: VoiceSource
     public var pad: PadConfig
+    public var expr: ExprConfig
     public var synth: SynthConfig
     public var sampler: SamplerConfig
     public var fx: FxConfig
@@ -157,8 +179,10 @@ public func defaultState() -> AppState {
         pad: PadConfig(
             layout: .square, rows: 4, cols: 12,
             rowTuning: "Fourths [+5]", colScale: "Chromatic", baseNote: 48,
-            slide: 0.35, frets: false, touchVel: true, aftertouch: true
+            slide: 0.35, frets: false, touchVel: true, aftertouch: true,
+            mirror: false, mirrorOffset: 0, vibrato: 0, haptics: 0.35
         ),
+        expr: ExprConfig(pressure: .filter, tilt: .off, tiltAmount: 0.5),
         synth: SynthConfig(
             preset: "Super Sine",
             gen1: GenConfig(morph: 0.08, semi: 0, tune: 0, level: 0.85),
@@ -207,6 +231,13 @@ public enum PathMap {
         (\AppState.pad.frets, "pad.frets"),
         (\AppState.pad.touchVel, "pad.touchVel"),
         (\AppState.pad.aftertouch, "pad.aftertouch"),
+        (\AppState.pad.mirror, "pad.mirror"),
+        (\AppState.pad.mirrorOffset, "pad.mirrorOffset"),
+        (\AppState.pad.vibrato, "pad.vibrato"),
+        (\AppState.pad.haptics, "pad.haptics"),
+        (\AppState.expr.pressure, "expr.pressure"),
+        (\AppState.expr.tilt, "expr.tilt"),
+        (\AppState.expr.tiltAmount, "expr.tiltAmount"),
         (\AppState.synth.preset, "synth.preset"),
         (\AppState.synth.gen1.morph, "synth.gen1.morph"),
         (\AppState.synth.gen1.semi, "synth.gen1.semi"),
@@ -367,6 +398,10 @@ public func sanitizeState(_ input: AppState) -> AppState {
     if SCALES[state.pad.colScale] == nil { state.pad.colScale = d.pad.colScale }
     state.pad.baseNote = clamp(state.pad.baseNote, 12, 96)
     state.pad.slide = finite(state.pad.slide, d.pad.slide, 0, 1)
+    state.pad.mirrorOffset = clamp(state.pad.mirrorOffset, -24, 24)
+    state.pad.vibrato = finite(state.pad.vibrato, d.pad.vibrato, 0, 1)
+    state.pad.haptics = finite(state.pad.haptics, d.pad.haptics, 0, 1)
+    state.expr.tiltAmount = finite(state.expr.tiltAmount, d.expr.tiltAmount, 0, 1)
 
     state.synth.gen1.morph = finite(state.synth.gen1.morph, d.synth.gen1.morph, 0, 1)
     state.synth.gen1.semi = clamp(state.synth.gen1.semi, -24, 24)

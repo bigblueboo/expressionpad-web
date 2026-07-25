@@ -8,7 +8,13 @@
 ///   FRETS snaps the slid pitch to semitones.
 /// - TCH VEL: velocity from vertical position within the key at onset.
 /// - AFTERTOUCH: vertical movement after onset becomes pressure 0..1.
+/// - VIB: horizontal wiggle around a spring-loaded anchor bends the fretted
+///   note by up to ±depth semitones; the anchor trails the finger so a held
+///   offset re-centers (string-like vibrato with spring-back).
 import Foundation
+
+/// Time (ms) for a sustained vibrato offset to relax back to the fretted pitch.
+private let VIB_RECENTER_MS: Double = 250
 
 public struct ActiveTouch {
     public var id: Int
@@ -19,6 +25,13 @@ public struct ActiveTouch {
     public var pressure: Double
     public var x: Double
     public var y: Double
+    /// Spring anchor for in-key vibrato; trails x to re-center the bend.
+    public var anchorX: Double
+    /// Current vibrato bend in semitones.
+    public var bend: Double
+    /// Nearest semitone last heard — fret-crossing haptics fire on change.
+    public var lastSemi: Int
+    public var lastMs: Double
 }
 
 public final class TouchTracker {
@@ -30,19 +43,26 @@ public final class TouchTracker {
     private let onChange: () -> Void
     /// Fires at event time for every note onset (down or drag retrigger).
     private let onTrigger: (KeyShape) -> Void
+    /// Fires whenever a voice crosses onto a new semitone (fret haptics).
+    private let onFret: () -> Void
+    private let now: () -> Double
 
     public init(
         getLayout: @escaping () -> Layout,
         getPad: @escaping () -> PadConfig,
         sink: VoiceSink,
         onChange: @escaping () -> Void = {},
-        onTrigger: @escaping (KeyShape) -> Void = { _ in }
+        onTrigger: @escaping (KeyShape) -> Void = { _ in },
+        onFret: @escaping () -> Void = {},
+        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime * 1000 }
     ) {
         self.getLayout = getLayout
         self.getPad = getPad
         self.sink = sink
         self.onChange = onChange
         self.onTrigger = onTrigger
+        self.onFret = onFret
+        self.now = now
     }
 
     public func down(_ id: Int, _ x: Double, _ y: Double) {
@@ -53,7 +73,8 @@ public final class TouchTracker {
         let vel = pad.touchVel ? velocityFromKey(key, y) : 0.8
         let touch = ActiveTouch(
             id: id, key: key, currentRow: key.row, startY: y,
-            pitch: Double(key.note), pressure: 0, x: x, y: y
+            pitch: Double(key.note), pressure: 0, x: x, y: y,
+            anchorX: x, bend: 0, lastSemi: key.note, lastMs: now()
         )
         active[id] = touch
         sink.noteOn(id, clampMidi(Double(key.note)), vel)
@@ -68,6 +89,18 @@ public final class TouchTracker {
         touch.x = x
         touch.y = y
 
+        // Vibrato only makes sense when pitch is otherwise quantized — discrete
+        // keys or fretted slides. A free slide already follows the finger.
+        let vibrato = pad.vibrato > 0 && (pad.slide == 0 || pad.frets)
+        if vibrato {
+            let t = now()
+            let dt = max(0, t - touch.lastMs)
+            touch.lastMs = t
+            touch.anchorX += (x - touch.anchorX) * (1 - exp(-dt / VIB_RECENTER_MS))
+            let span = max(1, touch.key.w)
+            touch.bend = max(-1, min(1, (x - touch.anchorX) / span)) * pad.vibrato
+        }
+
         if pad.slide > 0 {
             // Adopt the row beneath the finger before calculating pitch. Keeping
             // the same touch id makes row changes glides rather than retriggers.
@@ -76,7 +109,7 @@ public final class TouchTracker {
                 touch.key = over
             }
             var pitch = layout.pitchAt(x, touch.currentRow)
-            if pad.frets { pitch = pitch.rounded() }
+            if pad.frets { pitch = pitch.rounded() + (vibrato ? touch.bend : 0) }
             pitch = clampMidi(pitch)
             if pitch != touch.pitch {
                 touch.pitch = pitch
@@ -91,9 +124,23 @@ public final class TouchTracker {
                 touch.startY = y
                 touch.pitch = Double(over.note)
                 touch.pressure = 0
+                touch.anchorX = x
+                touch.bend = 0
                 sink.noteOn(id, clampMidi(Double(over.note)), vel)
                 onTrigger(over)
+            } else if vibrato {
+                let pitch = clampMidi(Double(touch.key.note) + touch.bend)
+                if pitch != touch.pitch {
+                    touch.pitch = pitch
+                    sink.glide(id, pitch)
+                }
             }
+        }
+
+        let semi = Int(touch.pitch.rounded())
+        if semi != touch.lastSemi {
+            touch.lastSemi = semi
+            onFret()
         }
 
         if pad.aftertouch {

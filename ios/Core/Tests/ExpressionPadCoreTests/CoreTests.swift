@@ -260,3 +260,33 @@ struct ColorsTests {
         )
     }
 }
+
+struct ExpressionStateTests {
+    @Test func sanitizesMirrorVibratoHapticsAndTiltAmount() {
+        var s = defaultState()
+        s.pad.mirrorOffset = 99
+        s.pad.vibrato = 42
+        s.pad.haptics = -3
+        s.expr.tiltAmount = 9
+        let clean = sanitizeState(s)
+        #expect(clean.pad.mirrorOffset == 24)
+        #expect(clean.pad.vibrato == 1)
+        #expect(clean.pad.haptics == 0)
+        #expect(clean.expr.tiltAmount == 1)
+    }
+
+    @Test func expressionDefaultsAreBackwardCompatible() {
+        let d = defaultState()
+        #expect(d.expr == ExprConfig(pressure: .filter, tilt: .off, tiltAmount: 0.5))
+        #expect(d.pad.mirror == false)
+        #expect(d.pad.vibrato == 0)
+    }
+
+    @Test func legacyPersistedStateWithoutNewKeysLoads() {
+        let legacy = #"{"pad":{"rows":6}}"#.data(using: .utf8)!
+        let store = Store.load(from: legacy)
+        #expect(store.state.pad.rows == 6)
+        #expect(store.state.expr.pressure == .filter)
+        #expect(store.state.pad.haptics == 0.35)
+    }
+}

@@ -2,6 +2,7 @@
 /// audio I/O thread; AVAudioSession is tuned for low latency (5 ms buffers,
 /// 48 kHz). Everything the kernel needs arrives through the lock-free ring.
 import AVFoundation
+import CoreMotion
 import ExpressionPadCore
 
 final class AudioEngine: ObservableObject {
@@ -14,6 +15,8 @@ final class AudioEngine: ObservableObject {
     private var engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
     private var applicationSuspended = false
+    private let motion = CMMotionManager()
+    private var tiltSmoothed = 0.0
 
     var running: Bool { engine.isRunning }
 
@@ -49,6 +52,11 @@ final class AudioEngine: ObservableObject {
         buildGraph()
         start()
         observeSession()
+
+        store.subscribe { [weak self] _, path in
+            if path == "expr.tilt" { self?.syncTilt() }
+        }
+        syncTilt()
     }
 
     var sampleRegistry: SampleRegistry { bridge.registry }
@@ -93,6 +101,7 @@ final class AudioEngine: ObservableObject {
     /// Idempotent: safe to call on every foregrounding.
     func start() {
         applicationSuspended = false
+        syncTilt()
         guard !engine.isRunning else { return }
         try? AVAudioSession.sharedInstance().setActive(true)
         try? engine.start()
@@ -103,10 +112,32 @@ final class AudioEngine: ObservableObject {
     /// waste power and interfere with the user's other audio.
     func stop() {
         applicationSuspended = true
+        if motion.isDeviceMotionActive { motion.stopDeviceMotionUpdates() }
         if engine.isRunning { engine.stop() }
         try? AVAudioSession.sharedInstance().setActive(
             false, options: .notifyOthersOnDeactivation
         )
+    }
+
+    /// Start/stop the motion feed to match the EXPRESSION tilt routing. The
+    /// gravity vector's z-component folds to the same "uprightness" 0 (flat on
+    /// a table) → 1 (screen vertical) the web build derives from
+    /// DeviceOrientation, in any rotation.
+    private func syncTilt() {
+        let wanted = store.state.expr.tilt != .off && !applicationSuspended
+        if wanted && motion.isDeviceMotionAvailable && !motion.isDeviceMotionActive {
+            motion.deviceMotionUpdateInterval = 1.0 / 30
+            motion.startDeviceMotionUpdates(to: .main) { [weak self] dm, _ in
+                guard let self, let gravity = dm?.gravity else { return }
+                let upright = 1 - min(1, abs(gravity.z))
+                self.tiltSmoothed += (upright - self.tiltSmoothed) * 0.25
+                self.kernel.events.push(.param(.tilt, Float(self.tiltSmoothed)))
+            }
+        } else if !wanted && motion.isDeviceMotionActive {
+            motion.stopDeviceMotionUpdates()
+            tiltSmoothed = 0
+            kernel.events.push(.param(.tilt, 0))
+        }
     }
 
     private func observeSession() {

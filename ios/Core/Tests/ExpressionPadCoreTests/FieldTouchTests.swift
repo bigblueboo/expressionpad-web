@@ -316,3 +316,102 @@ struct KeyboardInputTests {
         #expect(kbd.active.isEmpty)
     }
 }
+
+final class VibratoTests {
+    var pad: PadConfig
+    var layout: Layout
+    let sink = MockSink()
+    var clock: Double = 0
+    var fretCrossings = 0
+    var tracker: TouchTracker!
+
+    init() {
+        pad = defaultState().pad
+        pad.slide = 0
+        pad.frets = false
+        pad.touchVel = false
+        pad.aftertouch = false
+        pad.vibrato = 1
+        var p = squareParams(rows: 4, cols: 12, size: 400)
+        p.width = 1200
+        p.rowOffsets = rowOffsets("Fourths [+5]", 4)
+        layout = buildLayout(p)
+        tracker = TouchTracker(
+            getLayout: { [unowned self] in self.layout },
+            getPad: { [unowned self] in self.pad },
+            sink: sink,
+            onFret: { [unowned self] in self.fretCrossings += 1 },
+            now: { [unowned self] in self.clock }
+        )
+    }
+
+    private func glides() -> [Double] {
+        sink.calls.compactMap { if case let .glide(_, p) = $0 { return p } else { return nil } }
+    }
+
+    @Test func wiggleBendsWithinTheKey() {
+        tracker.down(1, 50, 390) // C3 at the key center
+        clock += 16
+        tracker.move(1, 80, 390) // wiggle right, still inside key 0
+        guard let p = glides().last else {
+            Issue.record("no glide")
+            return
+        }
+        #expect(p > 48 && p < 49)
+        #expect(sink.ons().count == 1) // no retrigger
+    }
+
+    @Test func springsBackToTheFrettedPitchWhenHeld() {
+        tracker.down(1, 50, 390)
+        clock += 16
+        tracker.move(1, 80, 390)
+        #expect(glides().last! > 48.1)
+        for _ in 0..<12 {
+            clock += 200
+            tracker.move(1, 80, 390) // hold position — anchor catches up
+        }
+        let settled = glides().last!
+        #expect(settled >= 48 && settled < 48.03)
+    }
+
+    @Test func addsVibratoOnTopOfFrettedSlides() {
+        pad.slide = 0.5
+        pad.frets = true
+        tracker.down(1, 50, 390)
+        clock += 16
+        tracker.move(1, 80, 390)
+        guard let p = glides().last else {
+            Issue.record("no glide")
+            return
+        }
+        #expect(p != p.rounded())
+        #expect(abs(p - 48) < 1)
+    }
+
+    @Test func ignoresVibratoDuringFreeSlides() {
+        pad.slide = 0.5
+        pad.frets = false
+        tracker.down(1, 50, 390)
+        clock += 16
+        tracker.move(1, 100, 390)
+        #expect(abs(glides().last! - 48.5) < 1e-9) // pure interpolation, no bend
+    }
+
+    @Test func firesFretCallbackOnSlideCrossings() {
+        pad.vibrato = 0
+        pad.slide = 0.5
+        tracker.down(1, 50, 390)
+        #expect(fretCrossings == 0) // onset is not a crossing
+        tracker.move(1, 150, 390) // 48 → 49 crosses one boundary
+        #expect(fretCrossings == 1)
+        tracker.move(1, 350, 390) // one event per move batch is enough
+        #expect(fretCrossings == 2)
+    }
+
+    @Test func firesFretCallbackOnDiscreteDragRetriggers() {
+        pad.vibrato = 0
+        tracker.down(1, 50, 390)
+        tracker.move(1, 150, 390)
+        #expect(fretCrossings == 1)
+    }
+}

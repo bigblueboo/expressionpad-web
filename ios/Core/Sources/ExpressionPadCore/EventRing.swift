@@ -27,6 +27,10 @@ public enum ParamID: Int32 {
     case fattenAmt, fattenOn
     case samplerLevel, samplerAttack, samplerRelease, samplerRetrig
     case slide
+    case exprPressure // 0 filter, 1 level, 2 lfo, 3 off
+    case exprTilt // 0 off, 1 filter, 2 level, 3 lfo
+    case exprTiltAmount
+    case tilt // live device uprightness 0..1
 }
 
 /// A PCM buffer reference the kernel can play. The pointed-to memory is owned

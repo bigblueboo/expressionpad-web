@@ -307,12 +307,40 @@ private struct PadPage: View {
                     value: store.binding(\.pad.baseNote), label: "base",
                     min: 12, max: 96, fmt: { noteName($0, withOctave: true) }
                 )
+                ToggleSquare(isOn: store.binding(\.pad.mirror), label: "mirror")
+                StepperControl(
+                    value: store.binding(\.pad.mirrorOffset), label: "mir offs",
+                    min: -24, max: 24, fmt: semiFmt
+                )
             }
             PanelGroup(title: "TOUCH") {
                 Knob(value: store.binding(\.pad.slide), label: "slide")
                 ToggleSquare(isOn: store.binding(\.pad.frets), label: "frets")
+                Knob(value: store.binding(\.pad.vibrato), label: "vib")
                 ToggleSquare(isOn: store.binding(\.pad.touchVel), label: "tch vel")
                 ToggleSquare(isOn: store.binding(\.pad.aftertouch), label: "aftrtch")
+                Knob(value: store.binding(\.pad.haptics), label: "haptic")
+            }
+            PanelGroup(title: "EXPRESSION") {
+                SelectMenu(
+                    selection: store.binding(\.expr.pressure), label: "press",
+                    options: [
+                        (PressureTarget.filter, "Filter"),
+                        (.level, "Level"),
+                        (.lfo, "LFO"),
+                        (.off, "Off"),
+                    ]
+                )
+                SelectMenu(
+                    selection: store.binding(\.expr.tilt), label: "tilt",
+                    options: [
+                        (TiltTarget.off, "Off"),
+                        (.filter, "Filter"),
+                        (.level, "Level"),
+                        (.lfo, "LFO"),
+                    ]
+                )
+                Knob(value: store.binding(\.expr.tiltAmount), label: "tilt amt")
             }
             PanelGroup(title: "APPEARANCE") {
                 SelectMenu(selection: store.binding(\.appearance.scheme), label: "coloring", options: SCHEME_NAMES)

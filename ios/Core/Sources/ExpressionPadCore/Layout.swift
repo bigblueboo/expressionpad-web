@@ -55,10 +55,15 @@ public struct LayoutParams: Sendable {
     public var rowOffsets: [Int]
     /// Scale step pattern for columns (ignored by piano).
     public var scale: [Int]
+    /// Mirror the surface down the middle (square/hex/piano only).
+    public var mirror: Bool
+    /// Semitone offset applied to the mirrored (right) half.
+    public var mirrorOffset: Int
 
     public init(
         kind: LayoutKind, rows: Int, cols: Int, width: Double, height: Double,
-        baseNote: Int, rowOffsets: [Int], scale: [Int]
+        baseNote: Int, rowOffsets: [Int], scale: [Int],
+        mirror: Bool = false, mirrorOffset: Int = 0
     ) {
         self.kind = kind
         self.rows = rows
@@ -68,6 +73,8 @@ public struct LayoutParams: Sendable {
         self.baseNote = baseNote
         self.rowOffsets = rowOffsets
         self.scale = scale
+        self.mirror = mirror
+        self.mirrorOffset = mirrorOffset
     }
 }
 
@@ -76,6 +83,8 @@ public struct Layout {
     public var keys: [KeyShape]
     /// Pixel height of one row band.
     public var rowHeight: Double
+    /// Set when the surface is a mirrored two-thumb split.
+    public var mirrored: Bool = false
     let hitTestFn: (Double, Double) -> KeyShape?
     let pitchAtFn: (Double, Int) -> Double
 
@@ -428,7 +437,50 @@ func buildKbdPiano(_ p: LayoutParams) -> Layout {
     return Layout(params: p, keys: keys, rowHeight: geom.u, hitTestFn: hit, pitchAtFn: pitch)
 }
 
-public func buildLayout(_ p: LayoutParams) -> Layout {
+// ---------------------------------------------------------------- mirror ---
+
+/// Two-thumb split: the left half is the base layout at half width; the right
+/// half is its reflection, so both thumbs see identical geometry sweeping
+/// inward, with an optional semitone offset on the mirrored side.
+func buildMirror(_ p: LayoutParams) -> Layout {
+    let halfW = p.width / 2
+    var half = p
+    half.width = halfW
+    let base = buildSingle(half)
+    let offset = p.mirrorOffset
+    var keys = base.keys
+    var twins: [Int: KeyShape] = [:] // base key id → mirrored twin
+    var id = base.keys.count
+    for k in base.keys {
+        var twin = k
+        twin.id = id
+        twin.note = k.note + offset
+        twin.x = p.width - (k.x + k.w)
+        twin.cx = p.width - k.cx
+        twin.poly = k.poly.map { $0.map { SIMD2(p.width - $0.x, $0.y) } }
+        twins[k.id] = twin
+        keys.append(twin)
+        id += 1
+    }
+    let frozenTwins = twins
+    // Keep reflected coordinates strictly inside the base surface so a touch
+    // exactly on the seam still resolves to the innermost key.
+    let reflect: (Double) -> Double = { x in min(halfW - 1e-3, max(0, p.width - x)) }
+    return Layout(
+        params: p, keys: keys, rowHeight: base.rowHeight, mirrored: true,
+        hitTestFn: { x, y in
+            if x < halfW { return base.hitTest(x, y) }
+            guard let hit = base.hitTest(reflect(x), y) else { return nil }
+            return frozenTwins[hit.id]
+        },
+        pitchAtFn: { x, row in
+            if x < halfW { return base.pitchAt(x, row) }
+            return base.pitchAt(reflect(x), row) + Double(offset)
+        }
+    )
+}
+
+func buildSingle(_ p: LayoutParams) -> Layout {
     switch p.kind {
     case .hex: return buildHex(p)
     case .piano: return buildPiano(p)
@@ -436,4 +488,9 @@ public func buildLayout(_ p: LayoutParams) -> Layout {
     case .kbdPiano: return buildKbdPiano(p)
     case .square: return buildSquare(p)
     }
+}
+
+public func buildLayout(_ p: LayoutParams) -> Layout {
+    if p.mirror && !p.kind.isKeyboard { return buildMirror(p) }
+    return buildSingle(p)
 }

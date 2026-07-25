@@ -192,3 +192,86 @@ struct KbdLayoutTests {
         #expect(Set(l.keys.map { $0.row }).count == 4)
     }
 }
+
+struct MirrorLayoutTests {
+    var layout: Layout {
+        var p = base
+        p.mirror = true
+        p.mirrorOffset = 12
+        return buildLayout(p)
+    }
+
+    @Test func doublesKeyCountAndFlagsTheLayout() {
+        let l = layout
+        #expect(l.keys.count == 96)
+        #expect(l.mirrored)
+    }
+
+    @Test func leftHalfMatchesUnmirroredLayoutAtHalfWidth() {
+        let k = layout.hitTest(10, 390)!
+        #expect(k.note == 48)
+        #expect(k.row == 0)
+        #expect(k.col == 0)
+    }
+
+    @Test func reflectsGeometrySoBothThumbsSeeTheSameShape() {
+        let l = layout
+        for k in l.keys.prefix(48) {
+            let twin = l.hitTest(1200 - k.cx, k.cy)!
+            #expect(twin.note == k.note + 12)
+            #expect(abs(twin.cx - (1200 - k.cx)) < 1e-6)
+            #expect(abs(twin.cy - k.cy) < 1e-6)
+        }
+    }
+
+    @Test func appliesTheSemitoneOffsetOnTheRightHalfOnly() {
+        let l = layout
+        #expect(l.hitTest(1190, 390)!.note == 60) // mirror of bottom-left C3
+        #expect(l.hitTest(610, 390)!.note == 71) // innermost right key
+        #expect(l.hitTest(590, 390)!.note == 59) // innermost left key
+    }
+
+    @Test func mirrorsContinuousPitchWithTheOffset() {
+        let l = layout
+        #expect(abs(l.pitchAt(25, 0) - 48) < 1e-9) // half-width keys: center at 25
+        #expect(abs(l.pitchAt(1175, 0) - 60) < 1e-9)
+        // Pitch rises toward the seam from both sides.
+        #expect(l.pitchAt(590, 0) > l.pitchAt(500, 0))
+        #expect(l.pitchAt(610, 0) >= l.pitchAt(700, 0))
+    }
+
+    @Test func resolvesTouchesExactlyOnTheSeam() {
+        #expect(layout.hitTest(600, 390) != nil)
+    }
+
+    @Test func mirrorsHexesWithReflectedPolygonsInsideTheSurface() {
+        var p = base
+        p.kind = .hex
+        p.mirror = true
+        let hex = buildLayout(p)
+        #expect(hex.keys.count == 96)
+        for k in hex.keys {
+            for pt in k.poly! {
+                #expect(pt.x >= -1 && pt.x <= 1201)
+            }
+        }
+    }
+
+    @Test func mirrorsStackedPianos() {
+        var p = base
+        p.kind = .piano
+        let solo = buildLayout(p)
+        p.mirror = true
+        let split = buildLayout(p)
+        #expect(split.keys.count == 2 * solo.keys.count)
+    }
+
+    @Test func ignoredByTypingKeyboardLayouts() {
+        var p = base
+        p.kind = .kbdChromatic
+        p.mirror = true
+        let kbd = buildLayout(p)
+        #expect(!kbd.mirrored)
+        #expect(kbd.keys.count == 45) // 10 + 11 + 12 + 12 physical keys
+    }
+}
