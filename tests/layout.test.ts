@@ -165,3 +165,69 @@ describe('piano layout', () => {
     }
   })
 })
+
+describe('mirrored layout', () => {
+  const layout = buildLayout({ ...base, mirror: true, mirrorOffset: 12 })
+
+  it('doubles the key count and flags the layout', () => {
+    expect(layout.keys).toHaveLength(96)
+    expect(layout.mirrored).toBe(true)
+  })
+
+  it('keeps the left half identical to the unmirrored layout at half width', () => {
+    const k = layout.hitTest(10, 390)!
+    expect(k.note).toBe(48)
+    expect(k.row).toBe(0)
+    expect(k.col).toBe(0)
+  })
+
+  it('reflects geometry so both thumbs see the same shape', () => {
+    for (const k of layout.keys.slice(0, 48)) {
+      const twin = layout.hitTest(1200 - k.cx, k.cy)!
+      expect(twin.note).toBe(k.note + 12)
+      expect(twin.cx).toBeCloseTo(1200 - k.cx)
+      expect(twin.cy).toBeCloseTo(k.cy)
+    }
+  })
+
+  it('applies the semitone offset on the right half only', () => {
+    expect(layout.hitTest(1190, 390)!.note).toBe(60) // mirror of bottom-left C3
+    expect(layout.hitTest(610, 390)!.note).toBe(71) // innermost right key
+    expect(layout.hitTest(590, 390)!.note).toBe(59) // innermost left key
+  })
+
+  it('mirrors continuous pitch with the offset', () => {
+    expect(layout.pitchAt(25, 0)).toBeCloseTo(48) // half-width keys: center at 25
+    expect(layout.pitchAt(1175, 0)).toBeCloseTo(60)
+    // Pitch rises toward the seam from both sides.
+    expect(layout.pitchAt(590, 0)).toBeGreaterThan(layout.pitchAt(500, 0))
+    expect(layout.pitchAt(610, 0)).toBeGreaterThan(layout.pitchAt(700, 0) - 1e-9)
+  })
+
+  it('resolves touches exactly on the seam', () => {
+    expect(layout.hitTest(600, 390)).not.toBeNull()
+  })
+
+  it('mirrors hexes with reflected polygons inside the surface', () => {
+    const hex = buildLayout({ ...base, kind: 'hex', mirror: true, mirrorOffset: 0 })
+    expect(hex.keys.length).toBe(96)
+    for (const k of hex.keys) {
+      for (const [px] of k.poly!) {
+        expect(px).toBeGreaterThanOrEqual(-1)
+        expect(px).toBeLessThanOrEqual(1201)
+      }
+    }
+  })
+
+  it('mirrors stacked pianos', () => {
+    const solo = buildLayout({ ...base, kind: 'piano' })
+    const split = buildLayout({ ...base, kind: 'piano', mirror: true })
+    expect(split.keys.length).toBe(2 * solo.keys.length)
+  })
+
+  it('is ignored by typing-keyboard layouts', () => {
+    const kbd = buildLayout({ ...base, kind: 'kbd-chromatic', mirror: true })
+    expect(kbd.mirrored).toBeUndefined()
+    expect(kbd.keys.length).toBe(45) // 10 + 11 + 12 + 12 physical keys
+  })
+})

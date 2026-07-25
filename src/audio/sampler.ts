@@ -28,6 +28,8 @@ interface SVoice {
 }
 
 const MAX_LIVE_SAMPLE_VOICES = 16
+/** Quietest a voice gets when pressure is routed to level (swell floor). */
+const EXPR_LEVEL_FLOOR = 0.3
 
 function holdAutomation(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') {
@@ -158,7 +160,8 @@ export class SamplerEngine implements VoiceSink {
 
     const vca = ctx.createGain()
     vca.gain.value = 0
-    const peak = velocityToGain(vel)
+    const swell = this.store.state.expr.pressure === 'level' ? EXPR_LEVEL_FLOOR : 1
+    const peak = velocityToGain(vel) * swell
     const a = Math.max(0.002, s.attack)
     vca.gain.setValueAtTime(0, t)
     vca.gain.linearRampToValueAtTime(peak, t + a)
@@ -201,9 +204,19 @@ export class SamplerEngine implements VoiceSink {
     if (!v || !this.host.ctx) return
     const t = this.host.ctx.currentTime
     const p = clamp(value, 0, 1)
-    v.filter.frequency.setTargetAtTime(cutoffToHz(0.8 + 0.2 * p), t, 0.015)
-    // Gentle swell into the touch.
-    v.vca.gain.setTargetAtTime(velocityToGain(v.vel) * (1 + 0.35 * p), t, 0.03)
+    switch (this.store.state.expr.pressure) {
+      case 'filter':
+        v.filter.frequency.setTargetAtTime(cutoffToHz(0.8 + 0.2 * p), t, 0.015)
+        // Gentle swell into the touch.
+        v.vca.gain.setTargetAtTime(velocityToGain(v.vel) * (1 + 0.35 * p), t, 0.03)
+        break
+      case 'level':
+        v.vca.gain.setTargetAtTime(velocityToGain(v.vel) * lerp(EXPR_LEVEL_FLOOR, 1, p), t, 0.03)
+        break
+      default:
+        // 'lfo' has no meaning for samples; 'off' ignores pressure.
+        break
+    }
   }
 
   noteOff(id: number): void {

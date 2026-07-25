@@ -317,13 +317,33 @@ function padPage(store: Store): HTMLElement {
       stepper(store, 'pad.baseNote', 'base', {
         min: 12, max: 96, fmt: (v) => noteName(v, true),
       }),
+      toggle(store, 'pad.mirror', 'mirror'),
+      stepper(store, 'pad.mirrorOffset', 'mir offs', { min: -24, max: 24, fmt: semiFmt }),
     ),
     group(
       'TOUCH',
       knob(store, 'pad.slide', 'slide'),
       toggle(store, 'pad.frets', 'frets'),
+      knob(store, 'pad.vibrato', 'vib'),
       toggle(store, 'pad.touchVel', 'tch vel'),
       toggle(store, 'pad.aftertouch', 'aftrtch'),
+      knob(store, 'pad.haptics', 'haptic'),
+    ),
+    group(
+      'EXPRESSION',
+      select(store, 'expr.pressure', 'press', [
+        { value: 'filter', text: 'Filter' },
+        { value: 'level', text: 'Level' },
+        { value: 'lfo', text: 'LFO' },
+        { value: 'off', text: 'Off' },
+      ]),
+      select(store, 'expr.tilt', 'tilt', [
+        { value: 'off', text: 'Off' },
+        { value: 'filter', text: 'Filter' },
+        { value: 'level', text: 'Level' },
+        { value: 'lfo', text: 'LFO' },
+      ]),
+      knob(store, 'expr.tiltAmount', 'tilt amt'),
     ),
     group(
       'APPEARANCE',

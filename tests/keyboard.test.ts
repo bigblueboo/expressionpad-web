@@ -116,6 +116,7 @@ describe('KeyboardInput', () => {
     layout: 'kbd-chromatic', rows: 4, cols: 12, rowTuning: 'Fourths [+5]',
     colScale: 'Chromatic', baseNote: 48, slide: 0, frets: false,
     touchVel: false, aftertouch: false,
+    mirror: false, mirrorOffset: 0, vibrato: 0, haptics: 0,
   }
 
   beforeEach(() => {

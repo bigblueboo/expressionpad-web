@@ -8,6 +8,7 @@ import { MidiIn, MidiOut } from './midi/midi'
 import { PadView } from './ui/pad'
 import { KeyboardInput } from './ui/keyboard'
 import { buildControls } from './ui/controls'
+import { TiltSource } from './ui/tilt'
 
 const app = document.getElementById('app')!
 const store = Store.load()
@@ -21,6 +22,12 @@ const urlMap: Record<string, [path: string, parse: (v: string) => unknown]> = {
   scale: ['pad.colScale', String],
   tuning: ['pad.rowTuning', String],
   base: ['pad.baseNote', Number],
+  mirror: ['pad.mirror', (v) => v !== '0'],
+  offset: ['pad.mirrorOffset', Number],
+  vib: ['pad.vibrato', Number],
+  haptics: ['pad.haptics', Number],
+  press: ['expr.pressure', String],
+  tilt: ['expr.tilt', String],
   scheme: ['appearance.scheme', String],
   panel: ['ui.panelOpen', (v) => v !== '0'],
   tab: ['ui.tab', String],
@@ -78,8 +85,27 @@ store.subscribe((_s, path) => {
   }
 })
 
-// Wake/resume the audio context from the first gesture anywhere.
-const wake = () => engine.ensure()
+// Device tilt feeds the engine whenever the EXPRESSION tilt routing is on.
+const tiltSource = new TiltSource((v) => engine.setTilt(v))
+const syncTilt = () => {
+  if (store.state.expr.tilt !== 'off') {
+    void tiltSource.enable()
+  } else {
+    tiltSource.disable()
+    engine.setTilt(0)
+  }
+}
+store.subscribe((_s, path) => {
+  if (path === 'expr.tilt') syncTilt()
+})
+syncTilt()
+
+// Wake/resume the audio context from the first gesture anywhere. Tilt is
+// re-armed here too: iOS only grants the orientation sensor from a gesture.
+const wake = () => {
+  engine.ensure()
+  syncTilt()
+}
 window.addEventListener('pointerdown', wake, { passive: true })
 
 // Silence everything if the tab is hidden mid-performance.

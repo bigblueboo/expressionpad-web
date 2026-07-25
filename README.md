@@ -52,6 +52,19 @@ cd ios/Core
   C D E, s d → C# Eb). Keycaps render on the pad and respond to mouse too.
 - **Slide / frets**: slide knob morphs from discrete retriggering to fully
   continuous pitch; frets snaps slides to semitones.
+- **Mirror split**: MIRROR reflects the surface down the middle so both
+  thumbs see identical geometry sweeping inward — two-thumb phone play —
+  with an offset stepper pitching the right half up or down (±24 semi).
+- **In-key vibrato**: the VIB knob turns horizontal wiggle inside a key into
+  a string-like bend (up to ±1 semitone) around a spring-loaded anchor: fast
+  wiggle is vibrato, a held offset re-centers to the fretted pitch. Works on
+  discrete keys and on fretted slides.
+- **Fret haptics**: the HAPTIC knob ticks the device on every semitone
+  crossing (Vibration API on the web where available; CoreHaptics-style
+  impact feedback on iOS) so slides are playable without looking.
+- **Expression routing**: pressure (aftertouch) is assignable to filter,
+  level swell, or LFO depth; device tilt (flat → upright) can drive filter,
+  level, or LFO on top, with its own amount knob.
 - **Additive synth**: two morphing additive generators (sine→tri→saw→square
   via 32 harmonic partials), brightness tilt, ADSR, resonant filter with
   aftertouch control, LFO (pitch/filter). Original presets recreated:

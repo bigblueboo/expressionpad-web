@@ -17,10 +17,8 @@ describe('sample generators', () => {
       expect(s.root, name).toBeGreaterThanOrEqual(36)
       expect(s.root, name).toBeLessThanOrEqual(84)
       let peak = 0
-      for (const v of s.data) {
-        expect(Math.abs(v), name).toBeLessThanOrEqual(1)
-        peak = Math.max(peak, Math.abs(v))
-      }
+      for (const v of s.data) peak = Math.max(peak, Math.abs(v))
+      expect(peak, name).toBeLessThanOrEqual(1)
       expect(peak, name).toBeGreaterThan(0.5)
     }
   })

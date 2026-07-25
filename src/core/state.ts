@@ -17,6 +17,27 @@ export interface PadConfig {
   touchVel: boolean
   /** Vertical drag after onset modulates pressure/timbre. */
   aftertouch: boolean
+  /** Mirror the surface down the middle for two-thumb play. */
+  mirror: boolean
+  /** Semitone offset applied to the mirrored (right) half. */
+  mirrorOffset: number
+  /** In-key vibrato depth: horizontal wiggle bends up to this many semitones. */
+  vibrato: number
+  /** Haptic tick strength on fret/semitone crossings, 0 = off. */
+  haptics: number
+}
+
+/** Where the continuous performance axes are routed. */
+export type PressureTarget = 'filter' | 'level' | 'lfo' | 'off'
+export type TiltTarget = 'off' | 'filter' | 'level' | 'lfo'
+
+export interface ExprConfig {
+  /** Destination for touch pressure (aftertouch). */
+  pressure: PressureTarget
+  /** Destination for device tilt. */
+  tilt: TiltTarget
+  /** Tilt modulation amount 0..1. */
+  tiltAmount: number
 }
 
 export interface GenConfig {
@@ -92,6 +113,7 @@ export interface AppState {
   /** Which local sound source touches play — synth or sampler. */
   voice: 'synth' | 'sampler'
   pad: PadConfig
+  expr: ExprConfig
   synth: SynthConfig
   sampler: SamplerConfig
   fx: FxConfig
@@ -111,7 +133,9 @@ export function defaultState(): AppState {
       layout: 'square', rows: 4, cols: 12,
       rowTuning: 'Fourths [+5]', colScale: 'Chromatic', baseNote: 48,
       slide: 0.35, frets: false, touchVel: true, aftertouch: true,
+      mirror: false, mirrorOffset: 0, vibrato: 0, haptics: 0.35,
     },
+    expr: { pressure: 'filter', tilt: 'off', tiltAmount: 0.5 },
     synth: {
       preset: 'Super Sine',
       gen1: { morph: 0.08, semi: 0, tune: 0, level: 0.85 },
@@ -245,6 +269,8 @@ export class Store {
 }
 
 const LAYOUTS = new Set<LayoutKind>(['square', 'hex', 'piano', 'kbd-chromatic', 'kbd-piano'])
+const PRESSURE_TARGETS = new Set<PressureTarget>(['filter', 'level', 'lfo', 'off'])
+const TILT_TARGETS = new Set<TiltTarget>(['off', 'filter', 'level', 'lfo'])
 const TABS = new Set<UiConfig['tab']>(['synth', 'smplr', 'fx', 'pad', 'midi'])
 const VOICES = new Set<AppState['voice']>(['synth', 'sampler'])
 const LFO_TARGETS = new Set<SynthConfig['lfo']['target']>(['pitch', 'filter'])
@@ -286,6 +312,13 @@ export function sanitizeState(state: AppState): AppState {
   state.pad.frets = bool(state.pad.frets, d.pad.frets)
   state.pad.touchVel = bool(state.pad.touchVel, d.pad.touchVel)
   state.pad.aftertouch = bool(state.pad.aftertouch, d.pad.aftertouch)
+  state.pad.mirror = bool(state.pad.mirror, d.pad.mirror)
+  state.pad.mirrorOffset = integer(state.pad.mirrorOffset, d.pad.mirrorOffset, -24, 24)
+  state.pad.vibrato = finite(state.pad.vibrato, d.pad.vibrato, 0, 1)
+  state.pad.haptics = finite(state.pad.haptics, d.pad.haptics, 0, 1)
+  if (!PRESSURE_TARGETS.has(state.expr.pressure)) state.expr.pressure = d.expr.pressure
+  if (!TILT_TARGETS.has(state.expr.tilt)) state.expr.tilt = d.expr.tilt
+  state.expr.tiltAmount = finite(state.expr.tiltAmount, d.expr.tiltAmount, 0, 1)
 
   for (const [gen, fallback] of [[state.synth.gen1, d.synth.gen1], [state.synth.gen2, d.synth.gen2]] as const) {
     gen.morph = finite(gen.morph, fallback.morph, 0, 1)

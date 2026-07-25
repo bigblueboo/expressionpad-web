@@ -23,6 +23,11 @@ interface Voice {
   gens: GainNode[]
   filter: BiquadFilterNode
   vca: GainNode
+  /** Expression gain after the envelope — pressure→level swells ride here. */
+  exp: GainNode
+  /** Per-voice scalers on the shared LFO sends — pressure→lfo rides here. */
+  lfoAmtPitch: GainNode
+  lfoAmtFilter: GainNode
   pressure: number
   releasedAt: number | null
 }
@@ -36,6 +41,8 @@ interface FxInsert {
 
 const MAX_VOICES = 10
 const MAX_LIVE_VOICES = 24
+/** Quietest a voice gets when pressure is routed to level (swell floor). */
+const EXPR_LEVEL_FLOOR = 0.3
 
 function holdAutomation(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') {
@@ -65,10 +72,14 @@ export class SynthEngine implements VoiceSink {
   private lfoFilter!: GainNode
   private reverbTimer: ReturnType<typeof setTimeout> | null = null
 
+  private tiltValue = 0
+
   constructor(private store: Store, private makeContext?: () => AudioContext) {
     store.subscribe((_s, path) => {
       if (!this.ctx) return
-      if (path.startsWith('synth') || path.startsWith('fx')) this.applyParams(path)
+      if (path.startsWith('synth') || path.startsWith('fx') || path.startsWith('expr')) {
+        this.applyParams(path)
+      }
     })
   }
 
@@ -84,6 +95,7 @@ export class SynthEngine implements VoiceSink {
     this.buildGraph()
     this.applyParams('synth')
     this.applyParams('fx')
+    this.applyParams('expr')
   }
 
   /** Entry point of the shared FX chain, for sibling voices (sampler). */
@@ -235,8 +247,24 @@ export class SynthEngine implements VoiceSink {
     this.reverb.wet.gain.setTargetAtTime(fx.reverb.on ? fx.reverb.mix : 0, t, 0.02)
 
     this.lfo.frequency.setTargetAtTime(clamp(s.lfo.rate, 0.05, 30), t, 0.02)
-    this.lfoPitch.gain.setTargetAtTime(s.lfo.target === 'pitch' ? s.lfo.depth * 60 : 0, t, 0.02)
-    this.lfoFilter.gain.setTargetAtTime(s.lfo.target === 'filter' ? s.lfo.depth * 2400 : 0, t, 0.02)
+    this.applyLfoDepth(t)
+
+    if (path.startsWith('expr')) {
+      // Routing changed — put every axis back where the new targets expect it.
+      const expr = this.store.state.expr
+      this.voiceBus.gain.setTargetAtTime(
+        expr.tilt === 'level' ? lerp(1 - expr.tiltAmount, 1, this.tiltValue) : 1, t, 0.03,
+      )
+      for (const v of this.voices.values()) {
+        v.exp.gain.setTargetAtTime(
+          expr.pressure === 'level' ? lerp(EXPR_LEVEL_FLOOR, 1, v.pressure) : 1, t, 0.03,
+        )
+        const lfoAmt = expr.pressure === 'lfo' ? v.pressure : 1
+        v.lfoAmtPitch.gain.setTargetAtTime(lfoAmt, t, 0.03)
+        v.lfoAmtFilter.gain.setTargetAtTime(lfoAmt, t, 0.03)
+        this.updateVoiceFilter(v)
+      }
+    }
 
     if (path.includes('semi') || path.includes('tune')) {
       for (const v of this.voices.values()) this.retuneVoice(v)
@@ -263,12 +291,20 @@ export class SynthEngine implements VoiceSink {
     const fx = this.fx()
     const t = ctx.currentTime
 
+    const expr = this.store.state.expr
     const filter = ctx.createBiquadFilter()
     filter.type = 'lowpass'
     const vca = ctx.createGain()
     vca.gain.value = 0
-    filter.connect(vca).connect(this.synthBus)
-    this.lfoFilter.connect(filter.detune)
+    const exp = ctx.createGain()
+    exp.gain.value = expr.pressure === 'level' ? EXPR_LEVEL_FLOOR : 1
+    filter.connect(vca).connect(exp).connect(this.synthBus)
+    const lfoAmtPitch = ctx.createGain()
+    const lfoAmtFilter = ctx.createGain()
+    lfoAmtPitch.gain.value = expr.pressure === 'lfo' ? 0 : 1
+    lfoAmtFilter.gain.value = expr.pressure === 'lfo' ? 0 : 1
+    this.lfoPitch.connect(lfoAmtPitch)
+    this.lfoFilter.connect(lfoAmtFilter).connect(filter.detune)
 
     const fatten = fx.fatten.on
     const detuneSpread = lerp(4, 28, fx.fatten.amt)
@@ -301,7 +337,7 @@ export class SynthEngine implements VoiceSink {
       const scale = ctx.createGain()
       scale.gain.value = layer.gainScale
       osc.connect(scale).connect(layer.gen === 0 ? g1 : g2)
-      this.lfoPitch.connect(osc.detune)
+      lfoAmtPitch.connect(osc.detune)
       osc.start(t)
       oscs.push(osc)
       oscGens.push(layer.gen)
@@ -309,6 +345,7 @@ export class SynthEngine implements VoiceSink {
 
     const voice: Voice = {
       pitch, vel, oscs, oscGens, layerDetunes, gens: [g1, g2], filter, vca,
+      exp, lfoAmtPitch, lfoAmtFilter,
       pressure: 0, releasedAt: null,
     }
     this.voices.set(id, voice)
@@ -333,7 +370,48 @@ export class SynthEngine implements VoiceSink {
     const v = this.voices.get(id)
     if (!v) return
     v.pressure = clamp(value, 0, 1)
-    this.updateVoiceFilter(v)
+    const t = this.ctx!.currentTime
+    switch (this.store.state.expr.pressure) {
+      case 'filter':
+        this.updateVoiceFilter(v)
+        break
+      case 'level':
+        v.exp.gain.setTargetAtTime(lerp(EXPR_LEVEL_FLOOR, 1, v.pressure), t, 0.03)
+        break
+      case 'lfo':
+        v.lfoAmtPitch.gain.setTargetAtTime(v.pressure, t, 0.03)
+        v.lfoAmtFilter.gain.setTargetAtTime(v.pressure, t, 0.03)
+        break
+      case 'off':
+        break
+    }
+  }
+
+  /** Device-tilt modulation source, 0 (flat on a table) .. 1 (upright). */
+  setTilt(value: number): void {
+    const v = clamp(value, 0, 1)
+    if (Math.abs(v - this.tiltValue) < 0.002) return
+    this.tiltValue = v
+    if (!this.ctx) return
+    const expr = this.store.state.expr
+    const t = this.ctx.currentTime
+    switch (expr.tilt) {
+      case 'filter':
+        for (const voice of this.voices.values()) this.updateVoiceFilter(voice)
+        break
+      case 'level':
+        this.voiceBus.gain.setTargetAtTime(lerp(1 - expr.tiltAmount, 1, v), t, 0.03)
+        break
+      case 'lfo':
+        this.applyLfoDepth(t)
+        break
+      case 'off':
+        break
+    }
+  }
+
+  get tilt(): number {
+    return this.tiltValue
   }
 
   noteOff(id: number): void {
@@ -400,12 +478,13 @@ export class SynthEngine implements VoiceSink {
     this.releaseTails.delete(v)
     try {
       v.vca.disconnect()
+      v.exp.disconnect()
       v.filter.disconnect()
-      for (const osc of v.oscs) {
-        this.lfoPitch.disconnect(osc.detune)
-        osc.disconnect()
-      }
-      this.lfoFilter.disconnect(v.filter.detune)
+      for (const osc of v.oscs) osc.disconnect()
+      this.lfoPitch.disconnect(v.lfoAmtPitch)
+      this.lfoFilter.disconnect(v.lfoAmtFilter)
+      v.lfoAmtPitch.disconnect()
+      v.lfoAmtFilter.disconnect()
     } catch {
       // double-disconnects are harmless
     }
@@ -425,10 +504,25 @@ export class SynthEngine implements VoiceSink {
 
   private updateVoiceFilter(v: Voice): void {
     const s = this.synth()
+    const expr = this.store.state.expr
     const t = this.ctx!.currentTime
-    // Aftertouch pushes the cutoff up through the envelope-amount range.
-    const norm = clamp(s.filter.cutoff + s.filter.env * v.pressure, 0, 1)
+    // Aftertouch pushes the cutoff up through the envelope-amount range;
+    // tilt (when routed here) brightens the whole surface.
+    const press = expr.pressure === 'filter' ? v.pressure : 0
+    const tilt = expr.tilt === 'filter' ? this.tiltValue * expr.tiltAmount : 0
+    const norm = clamp(s.filter.cutoff + s.filter.env * press + tilt, 0, 1)
     v.filter.frequency.setTargetAtTime(cutoffToHz(norm), t, 0.015)
     v.filter.Q.setTargetAtTime(s.filter.res * 18, t, 0.02)
+  }
+
+  /** LFO depth with tilt (when routed here) adding depth on top of the knob. */
+  private applyLfoDepth(t: number): void {
+    const s = this.synth()
+    const expr = this.store.state.expr
+    const depth = clamp(
+      s.lfo.depth + (expr.tilt === 'lfo' ? this.tiltValue * expr.tiltAmount : 0), 0, 1,
+    )
+    this.lfoPitch.gain.setTargetAtTime(s.lfo.target === 'pitch' ? depth * 60 : 0, t, 0.02)
+    this.lfoFilter.gain.setTargetAtTime(s.lfo.target === 'filter' ? depth * 2400 : 0, t, 0.02)
   }
 }

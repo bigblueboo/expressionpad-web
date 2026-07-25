@@ -12,6 +12,12 @@ import { keyColors, parseHsl } from './colors'
 import { BrightnessField } from './field'
 import type { VoiceSink } from '../audio/sink'
 
+/** Pad paths whose change alters key geometry and forces a layout rebuild. */
+const GEOMETRY_PATHS = new Set([
+  'pad.layout', 'pad.rows', 'pad.cols', 'pad.rowTuning', 'pad.colScale',
+  'pad.baseNote', 'pad.mirror', 'pad.mirrorOffset',
+])
+
 export class PadView {
   readonly canvas: HTMLCanvasElement
   readonly tracker: TouchTracker
@@ -21,6 +27,7 @@ export class PadView {
   private accessibleKeys: HTMLDivElement
   private accessibilityNoteId = 2_000_000
   private lastFrame = performance.now()
+  private lastHaptic = 0
   private raf = 0
   private dpr = 1
 
@@ -48,11 +55,14 @@ export class PadView {
       (key) => {
         if (store.state.appearance.ripples) this.field.poke(key.id, 1.3)
       },
+      () => this.hapticTick(),
     )
     this.bindPointer()
     store.subscribe((_s, path) => {
       if (path.startsWith('pad') || path.startsWith('appearance')) {
-        if (path.startsWith('pad') && !path.includes('slide')) this.rebuild()
+        // Only geometry changes rebuild (and thus cancel held touches);
+        // performance knobs like slide/vib/haptic just repaint.
+        if (GEOMETRY_PATHS.has(path) || path === 'pad') this.rebuild()
         this.requestRender()
       }
     })
@@ -77,7 +87,21 @@ export class PadView {
       baseNote: pad.baseNote,
       rowOffsets: rowOffsets(pad.rowTuning, rows),
       scale: SCALES[pad.colScale] ?? SCALES.Chromatic,
+      mirror: pad.mirror,
+      mirrorOffset: pad.mirrorOffset,
     })
+  }
+
+  /** Short vibration tick on fret crossings, scaled by the HAPTIC knob. */
+  private hapticTick(): void {
+    const amt = this.store.state.pad.haptics
+    if (amt <= 0) return
+    const nav = navigator as Navigator & { vibrate?: (ms: number) => boolean }
+    if (typeof nav.vibrate !== 'function') return
+    const now = performance.now()
+    if (now - this.lastHaptic < 40) return
+    this.lastHaptic = now
+    nav.vibrate(Math.max(1, Math.round(2 + amt * 10)))
   }
 
   rebuild(): void {
@@ -262,6 +286,16 @@ export class PadView {
         ctx.fillText(key.char, key.x + key.w * 0.12, key.y + key.h * 0.1)
         ctx.restore()
       }
+    }
+
+    // Mark the mirror seam so each thumb knows its half.
+    if (this.layout.mirrored) {
+      ctx.strokeStyle = 'rgba(126, 214, 255, 0.22)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(width / 2, 0)
+      ctx.lineTo(width / 2, height)
+      ctx.stroke()
     }
   }
 

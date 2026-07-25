@@ -46,6 +46,10 @@ export interface LayoutParams {
   rowOffsets: number[]
   /** Scale step pattern for columns (ignored by piano). */
   scale: number[]
+  /** Mirror the surface down the middle (square/hex/piano only). */
+  mirror?: boolean
+  /** Semitone offset applied to the mirrored (right) half. */
+  mirrorOffset?: number
 }
 
 export interface Layout {
@@ -56,6 +60,8 @@ export interface Layout {
   pitchAt(x: number, row: number): number
   /** Pixel height of one row band. */
   rowHeight: number
+  /** Set when the surface is a mirrored two-thumb split. */
+  mirrored?: boolean
 }
 
 const WHITE_PCS = [0, 2, 4, 5, 7, 9, 11]
@@ -393,7 +399,52 @@ function buildKbdPiano(p: LayoutParams): Layout {
   return { params: p, keys, rowHeight: geom.u, ...kbdHitAndPitch(keys) }
 }
 
-export function buildLayout(p: LayoutParams): Layout {
+// ---------------------------------------------------------------- mirror ---
+
+const MIRRORABLE = new Set<LayoutKind>(['square', 'hex', 'piano'])
+
+/**
+ * Two-thumb split: the left half is the base layout at half width; the right
+ * half is its reflection, so both thumbs see identical geometry sweeping
+ * inward, with an optional semitone offset on the mirrored side.
+ */
+function buildMirror(p: LayoutParams): Layout {
+  const halfW = p.width / 2
+  const base = buildSingle({ ...p, width: halfW })
+  const offset = p.mirrorOffset ?? 0
+  const twins = new Map<number, KeyShape>() // base key id → mirrored twin
+  const keys: KeyShape[] = [...base.keys]
+  let id = base.keys.length
+  for (const k of base.keys) {
+    const twin: KeyShape = {
+      ...k,
+      id: id++,
+      note: k.note + offset,
+      x: p.width - (k.x + k.w),
+      cx: p.width - k.cx,
+      poly: k.poly?.map(([px, py]) => [p.width - px, py] as [number, number]),
+    }
+    twins.set(k.id, twin)
+    keys.push(twin)
+  }
+  // Keep reflected coordinates strictly inside the base surface so a touch
+  // exactly on the seam still resolves to the innermost key.
+  const reflect = (x: number) => Math.min(halfW - 1e-3, Math.max(0, p.width - x))
+  return {
+    params: p, keys, rowHeight: base.rowHeight, mirrored: true,
+    hitTest(x, y) {
+      if (x < halfW) return base.hitTest(x, y)
+      const hit = base.hitTest(reflect(x), y)
+      return hit ? twins.get(hit.id)! : null
+    },
+    pitchAt(x, row) {
+      if (x < halfW) return base.pitchAt(x, row)
+      return base.pitchAt(reflect(x), row) + offset
+    },
+  }
+}
+
+function buildSingle(p: LayoutParams): Layout {
   switch (p.kind) {
     case 'hex': return buildHex(p)
     case 'piano': return buildPiano(p)
@@ -401,4 +452,9 @@ export function buildLayout(p: LayoutParams): Layout {
     case 'kbd-piano': return buildKbdPiano(p)
     default: return buildSquare(p)
   }
+}
+
+export function buildLayout(p: LayoutParams): Layout {
+  if (p.mirror && MIRRORABLE.has(p.kind)) return buildMirror(p)
+  return buildSingle(p)
 }

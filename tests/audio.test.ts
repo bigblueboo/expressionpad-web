@@ -75,3 +75,112 @@ describe('audio voice lifecycle', () => {
     }
   })
 })
+
+describe('expression routing', () => {
+  /** Gain nodes created by a noteOn, in creation order: vca, exp, lfoP, lfoF. */
+  function voiceGains(ctx: MockAudioContext, start: number) {
+    const gains = ctx.instances.gain as unknown as Array<{ gain: MockParam }>
+    return { vca: gains[start], exp: gains[start + 1], lfoP: gains[start + 2], lfoF: gains[start + 3] }
+  }
+
+  it('pressure→level swells the expression gain from the floor', () => {
+    const { synth, store, ctx } = rig()
+    synth.ensure()
+    store.set('expr.pressure', 'level')
+    const start = ctx.instances.gain.length
+    synth.noteOn(1, 60, 0.8)
+    const { exp } = voiceGains(ctx, start)
+    expect(exp.gain.value).toBeCloseTo(0.3)
+    synth.pressure(1, 1)
+    expect(exp.gain.value).toBeCloseTo(1)
+    synth.pressure(1, 0)
+    expect(exp.gain.value).toBeCloseTo(0.3)
+  })
+
+  it('pressure→lfo swells the per-voice LFO sends from silence', () => {
+    const { synth, store, ctx } = rig()
+    synth.ensure()
+    store.set('expr.pressure', 'lfo')
+    const start = ctx.instances.gain.length
+    synth.noteOn(1, 60, 0.8)
+    const { exp, lfoP, lfoF } = voiceGains(ctx, start)
+    expect(exp.gain.value).toBe(1)
+    expect(lfoP.gain.value).toBe(0)
+    expect(lfoF.gain.value).toBe(0)
+    synth.pressure(1, 0.8)
+    expect(lfoP.gain.value).toBeCloseTo(0.8)
+    expect(lfoF.gain.value).toBeCloseTo(0.8)
+  })
+
+  it('pressure→filter (default) leaves level and LFO sends alone', () => {
+    const { synth, ctx } = rig()
+    synth.ensure()
+    const start = ctx.instances.gain.length
+    synth.noteOn(1, 60, 0.8)
+    const { exp, lfoP } = voiceGains(ctx, start)
+    const filter = ctx.instances.filter.at(-1) as unknown as { frequency: MockParam }
+    const before = filter.frequency.value
+    synth.pressure(1, 1)
+    expect(filter.frequency.value).toBeGreaterThan(before)
+    expect(exp.gain.value).toBe(1)
+    expect(lfoP.gain.value).toBe(1)
+  })
+
+  it('re-routing pressure mid-note resets the abandoned destination', () => {
+    const { synth, store, ctx } = rig()
+    synth.ensure()
+    store.set('expr.pressure', 'level')
+    const start = ctx.instances.gain.length
+    synth.noteOn(1, 60, 0.8)
+    const { exp } = voiceGains(ctx, start)
+    synth.pressure(1, 0.9)
+    expect(exp.gain.value).toBeGreaterThan(0.9)
+    store.set('expr.pressure', 'filter')
+    expect(exp.gain.value).toBe(1)
+  })
+
+  it('tilt→level rides the shared voice bus', () => {
+    const { synth, store, ctx } = rig()
+    synth.ensure()
+    store.set('expr.tilt', 'level') // tiltAmount defaults to 0.5
+    const voiceBus = (ctx.instances.gain as unknown as Array<{ gain: MockParam }>)[1]
+    synth.setTilt(1)
+    expect(voiceBus.gain.value).toBeCloseTo(1)
+    synth.setTilt(0)
+    expect(voiceBus.gain.value).toBeCloseTo(0.5)
+    store.set('expr.tilt', 'off')
+    expect(voiceBus.gain.value).toBeCloseTo(1)
+  })
+
+  it('tilt→lfo adds depth on top of the knob', () => {
+    const { synth, store, ctx } = rig()
+    synth.ensure()
+    store.set('expr.tilt', 'lfo')
+    const gains = ctx.instances.gain as unknown as Array<{ gain: MockParam }>
+    const lfoPitch = gains.find((g) => Math.abs(g.gain.value - 0.08 * 60) < 1e-6)!
+    expect(lfoPitch).toBeDefined()
+    synth.setTilt(1)
+    expect(lfoPitch.gain.value).toBeCloseTo((0.08 + 0.5) * 60)
+  })
+
+  it('tilt→filter brightens playing voices', () => {
+    const { synth, store, ctx } = rig()
+    synth.noteOn(1, 60, 0.8)
+    store.set('expr.tilt', 'filter')
+    const filter = ctx.instances.filter.at(-1) as unknown as { frequency: MockParam }
+    const before = filter.frequency.value
+    synth.setTilt(1)
+    expect(filter.frequency.value).toBeGreaterThan(before)
+  })
+
+  it('sampler swells with pressure routed to level', () => {
+    const { sampler, store, ctx } = rig()
+    store.set('expr.pressure', 'level')
+    sampler.noteOn(1, 60, 0.8)
+    const vca = ctx.instances.gain.at(-1) as unknown as { gain: MockParam }
+    const floor = vca.gain.value
+    expect(floor).toBeGreaterThan(0)
+    sampler.pressure(1, 1)
+    expect(vca.gain.value).toBeCloseTo(floor / 0.3)
+  })
+})

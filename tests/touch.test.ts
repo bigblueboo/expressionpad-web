@@ -21,7 +21,8 @@ function makePad(over: Partial<PadConfig> = {}): PadConfig {
   return {
     layout: 'square', rows: 4, cols: 12, rowTuning: 'Fourths [+5]',
     colScale: 'Chromatic', baseNote: 48, slide: 0, frets: false,
-    touchVel: false, aftertouch: false, ...over,
+    touchVel: false, aftertouch: false,
+    mirror: false, mirrorOffset: 0, vibrato: 0, haptics: 0, ...over,
   }
 }
 
@@ -216,5 +217,121 @@ describe('TouchTracker', () => {
     }
     expect(sink.ofType('on')).toHaveLength(2)
     expect(tracker.active.size).toBe(2)
+  })
+})
+
+describe('in-key vibrato and fret crossings', () => {
+  let sink: SpySink
+  let pad: PadConfig
+  let frets = 0
+  let clock = 0
+  let tracker: TouchTracker
+  const layout = makeLayout()
+
+  const make = () =>
+    new TouchTracker(
+      () => layout, () => pad, sink, () => {}, () => {}, () => frets++, () => clock,
+    )
+
+  beforeEach(() => {
+    sink = new SpySink()
+    pad = makePad({ vibrato: 1 })
+    frets = 0
+    clock = 0
+    tracker = make()
+  })
+
+  it('bends within the key on horizontal wiggle (slide off)', () => {
+    tracker.down(1, 50, 390) // C3 at the key center
+    clock += 16
+    tracker.move(1, 80, 390) // wiggle right, still inside key 0
+    const glides = sink.ofType('glide')
+    expect(glides.length).toBeGreaterThan(0)
+    const p = glides.at(-1)![2]
+    expect(p).toBeGreaterThan(48)
+    expect(p).toBeLessThan(49)
+    expect(sink.ofType('on')).toHaveLength(1) // no retrigger
+  })
+
+  it('springs back to the fretted pitch when the offset is held', () => {
+    tracker.down(1, 50, 390)
+    clock += 16
+    tracker.move(1, 80, 390)
+    const bentPitch = sink.ofType('glide').at(-1)![2]
+    expect(bentPitch).toBeGreaterThan(48.1)
+    for (let i = 0; i < 12; i++) {
+      clock += 200
+      tracker.move(1, 80, 390) // hold position — anchor catches up
+    }
+    const settled = sink.ofType('glide').at(-1)![2]
+    expect(settled).toBeGreaterThan(48 - 1e-6)
+    expect(settled).toBeLessThan(48.03)
+  })
+
+  it('scales bend depth with the vibrato knob', () => {
+    pad.vibrato = 0.25
+    tracker.down(1, 50, 390)
+    clock += 16
+    tracker.move(1, 150, 390) // way past the key → bend clamps at depth
+    // slide=0 crossing a key retriggers instead; stay inside the key:
+    sink.calls.length = 0
+    tracker.up(1)
+    tracker.down(2, 50, 390)
+    clock += 16
+    tracker.move(2, 95, 390)
+    const p = sink.ofType('glide').at(-1)![2]
+    expect(p - 48).toBeLessThanOrEqual(0.25 + 1e-9)
+  })
+
+  it('resets the bend anchor on drag retrigger', () => {
+    tracker.down(1, 50, 390)
+    clock += 16
+    tracker.move(1, 150, 390) // into the next key → retrigger, anchor reset
+    const on = sink.ofType('on').at(-1)!
+    expect(on[2]).toBe(49)
+    clock += 16
+    tracker.move(1, 151, 390) // negligible wiggle after reset
+    const glidesAfter = sink.ofType('glide')
+    if (glidesAfter.length > 0) {
+      expect(Math.abs(glidesAfter.at(-1)![2] - 49)).toBeLessThan(0.05)
+    }
+  })
+
+  it('adds vibrato on top of fretted slides', () => {
+    pad.slide = 0.5
+    pad.frets = true
+    tracker.down(1, 50, 390)
+    clock += 16
+    tracker.move(1, 80, 390)
+    const p = sink.ofType('glide').at(-1)![2]
+    expect(Number.isInteger(p)).toBe(false)
+    expect(Math.abs(p - 48)).toBeLessThan(1)
+  })
+
+  it('ignores vibrato during free (unfretted) slides', () => {
+    pad.slide = 0.5
+    pad.frets = false
+    tracker.down(1, 50, 390)
+    clock += 16
+    tracker.move(1, 100, 390)
+    const p = sink.ofType('glide').at(-1)![2]
+    expect(p).toBeCloseTo(48.5) // pure interpolation, no bend term
+  })
+
+  it('fires the fret callback on semitone crossings while sliding', () => {
+    pad = makePad({ slide: 0.5 })
+    tracker.down(1, 50, 390)
+    expect(frets).toBe(0) // onset is not a crossing
+    tracker.move(1, 150, 390) // 48 → 49 crosses one boundary
+    expect(frets).toBe(1)
+    tracker.move(1, 350, 390) // 49 → 51
+    expect(frets).toBe(2) // one event per move batch is enough for haptics
+  })
+
+  it('fires the fret callback on discrete drag retriggers', () => {
+    pad = makePad()
+    tracker.down(1, 50, 390)
+    tracker.move(1, 150, 390)
+    expect(frets).toBe(1)
   })
 })

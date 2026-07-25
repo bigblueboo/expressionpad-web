@@ -190,3 +190,36 @@ describe('presets', () => {
     expect(JSON.stringify(store.state.synth)).toBe(before)
   })
 })
+
+describe('mirror + expression sanitize', () => {
+  it('clamps mirror offset, vibrato, and haptics', () => {
+    const bad = defaultState()
+    bad.pad.mirror = true
+    bad.pad.mirrorOffset = 99
+    bad.pad.vibrato = 42
+    bad.pad.haptics = -3
+    const store = new Store(bad)
+    expect(store.state.pad.mirror).toBe(true)
+    expect(store.state.pad.mirrorOffset).toBe(24)
+    expect(store.state.pad.vibrato).toBe(1)
+    expect(store.state.pad.haptics).toBe(0)
+  })
+
+  it('rejects unknown expression routings and clamps the amount', () => {
+    const bad = defaultState()
+    bad.expr.pressure = 'banana' as never
+    bad.expr.tilt = 'level'
+    bad.expr.tiltAmount = 9
+    const store = new Store(bad)
+    expect(store.state.expr.pressure).toBe('filter')
+    expect(store.state.expr.tilt).toBe('level')
+    expect(store.state.expr.tiltAmount).toBe(1)
+  })
+
+  it('keeps expression defaults backward compatible', () => {
+    const store = new Store()
+    expect(store.state.expr).toEqual({ pressure: 'filter', tilt: 'off', tiltAmount: 0.5 })
+    expect(store.state.pad.mirror).toBe(false)
+    expect(store.state.pad.vibrato).toBe(0)
+  })
+})
