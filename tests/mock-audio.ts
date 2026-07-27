@@ -45,6 +45,35 @@ export class MockNode {
   }
 }
 
+export class MockGainNode extends MockNode {
+  gain = new MockParam(1)
+}
+
+export class MockFilterNode extends MockNode {
+  type = 'lowpass'
+  frequency = new MockParam(350)
+  Q = new MockParam(1)
+  detune = new MockParam(0)
+}
+
+export class MockOscillatorNode extends MockNode {
+  frequency = new MockParam(440)
+  detune = new MockParam(0)
+  wave: unknown = null
+  setPeriodicWave(wave: unknown): void {
+    this.wave = wave
+  }
+}
+
+export class MockBufferSourceNode extends MockNode {
+  buffer: unknown = null
+  loop = false
+  loopStart = 0
+  loopEnd = 0
+  detune = new MockParam(0)
+  playbackRate = new MockParam(1)
+}
+
 class MockBuffer {
   constructor(
     public numberOfChannels: number,
@@ -72,17 +101,25 @@ export class MockAudioContext {
     return node
   }
 
+  /** Typed registries, so tests read node params without casts. */
+  get gains(): MockGainNode[] {
+    return (this.instances.gain ?? []) as MockGainNode[]
+  }
+  get filters(): MockFilterNode[] {
+    return (this.instances.filter ?? []) as MockFilterNode[]
+  }
+  get oscs(): MockOscillatorNode[] {
+    return (this.instances.osc ?? []) as MockOscillatorNode[]
+  }
+
   resume(): Promise<void> {
     return Promise.resolve()
   }
   createGain() {
-    return this.make('gain', Object.assign(new MockNode(), { gain: new MockParam(1) }))
+    return this.make('gain', new MockGainNode())
   }
   createBiquadFilter() {
-    return this.make('filter', Object.assign(new MockNode(), {
-      type: 'lowpass', frequency: new MockParam(350), Q: new MockParam(1),
-      detune: new MockParam(0),
-    }))
+    return this.make('filter', new MockFilterNode())
   }
   createDynamicsCompressor() {
     return this.make('comp', Object.assign(new MockNode(), {
@@ -102,11 +139,7 @@ export class MockAudioContext {
     return this.make('conv', Object.assign(new MockNode(), { buffer: null as unknown }))
   }
   createOscillator() {
-    return this.make('osc', Object.assign(new MockNode(), {
-      frequency: new MockParam(440), detune: new MockParam(0),
-      wave: null as unknown,
-      setPeriodicWave(wave: unknown): void { this.wave = wave },
-    }))
+    return this.make('osc', new MockOscillatorNode())
   }
   createPeriodicWave(real: Float32Array, imag: Float32Array) {
     return { real, imag }
@@ -115,12 +148,38 @@ export class MockAudioContext {
     return new MockBuffer(channels, length, sampleRate)
   }
   createBufferSource() {
-    return this.make('src', Object.assign(new MockNode(), {
-      buffer: null as unknown, loop: false, loopStart: 0, loopEnd: 0,
-      detune: new MockParam(0), playbackRate: new MockParam(1),
-    }))
+    return this.make('src', new MockBufferSourceNode())
   }
   decodeAudioData(_bytes: ArrayBuffer): Promise<MockBuffer> {
     return Promise.resolve(new MockBuffer(1, 8000, this.sampleRate))
   }
+}
+
+// --------------------------------------------------- engine graph helpers ---
+// Creation-order knowledge about the engines' node graphs lives here, in one
+// place, so behavioral tests read node roles semantically instead of by index.
+
+/**
+ * The gain nodes a synth voice creates (engine.ts noteOn order), given
+ * `ctx.gains.length` captured just before the noteOn.
+ */
+export function synthVoiceGains(ctx: MockAudioContext, since: number) {
+  const [vca, exp, lfoAmtPitch, lfoAmtFilter] = ctx.gains.slice(since, since + 4)
+  return { vca, exp, lfoAmtPitch, lfoAmtFilter }
+}
+
+/**
+ * The nodes a sampler voice creates (sampler.ts startVoice order), given
+ * gain/filter counts captured just before the noteOn.
+ */
+export function samplerVoiceNodes(
+  ctx: MockAudioContext, gainsBefore: number, filtersBefore: number,
+) {
+  const [vca, exp] = ctx.gains.slice(gainsBefore, gainsBefore + 2)
+  return { vca, exp, filter: ctx.filters[filtersBefore] }
+}
+
+/** The shared pre-FX voice bus (second gain the engine's buildGraph creates). */
+export function voiceBusGain(ctx: MockAudioContext): MockGainNode {
+  return ctx.gains[1]
 }

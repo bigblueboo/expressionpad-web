@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TiltSource } from '../src/ui/tilt'
 
 function rig() {
@@ -8,7 +8,32 @@ function rig() {
   return { seen, tilt, tick: (ms = 40) => (clock += ms) }
 }
 
-describe('TiltSource', () => {
+/** Stub a permission-gated sensor (iOS Safari) and count real listeners. */
+function permissionRig() {
+  let grant: (v: string) => void = () => {}
+  const pending = new Promise<string>((resolve) => {
+    grant = resolve
+  })
+  vi.stubGlobal('DeviceOrientationEvent', { requestPermission: () => pending })
+  const listeners: unknown[] = []
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, fn) => {
+    if (type === 'deviceorientation') listeners.push(fn)
+  })
+  vi.spyOn(window, 'removeEventListener').mockImplementation((type, fn) => {
+    if (type === 'deviceorientation') {
+      const i = listeners.indexOf(fn)
+      if (i >= 0) listeners.splice(i, 1)
+    }
+  })
+  return { grant, listeners }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+describe('TiltSource attitude math', () => {
   it('maps device attitude to uprightness 0..1 in any rotation', () => {
     const flat = rig()
     flat.tilt.handle(0, 0) // flat on a table
@@ -47,5 +72,72 @@ describe('TiltSource', () => {
     const { seen, tilt } = rig()
     tilt.handle(null, null)
     expect(seen).toHaveLength(0)
+  })
+})
+
+describe('TiltSource activation lifecycle', () => {
+  it('shares one in-flight activation: concurrent gestures attach one listener', async () => {
+    const { grant, listeners } = permissionRig()
+    const tilt = new TiltSource(() => {})
+    tilt.setRequested(true)
+    const p1 = tilt.activateFromGesture()
+    const p2 = tilt.activateFromGesture()
+    expect(tilt.state).toBe('authorizing')
+    grant('granted')
+    expect(await Promise.all([p1, p2])).toEqual([true, true])
+    expect(listeners).toHaveLength(1)
+    expect(tilt.state).toBe('active')
+  })
+
+  it('turning routing off mid-prompt wins over a late grant', async () => {
+    const { grant, listeners } = permissionRig()
+    const tilt = new TiltSource(() => {})
+    tilt.setRequested(true)
+    const pending = tilt.activateFromGesture()
+    tilt.setRequested(false) // routing switched off while the prompt is up
+    grant('granted')
+    expect(await pending).toBe(false)
+    expect(listeners).toHaveLength(0)
+    expect(tilt.state).toBe('idle')
+  })
+
+  it('records denial and retries only from a fresh gesture', async () => {
+    const { grant, listeners } = permissionRig()
+    const tilt = new TiltSource(() => {})
+    tilt.setRequested(true)
+    const pending = tilt.activateFromGesture()
+    grant('denied')
+    expect(await pending).toBe(false)
+    expect(tilt.state).toBe('denied')
+    expect(listeners).toHaveLength(0)
+
+    // A fresh gesture re-prompts (the stub now grants immediately).
+    vi.stubGlobal('DeviceOrientationEvent', {
+      requestPermission: () => Promise.resolve('granted'),
+    })
+    expect(await tilt.activateFromGesture()).toBe(true)
+    expect(listeners).toHaveLength(1)
+  })
+
+  it('attaches without a gesture where no permission gate exists', async () => {
+    vi.stubGlobal('DeviceOrientationEvent', {}) // desktop/Android: no requestPermission
+    const listeners: unknown[] = []
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, fn) => {
+      if (type === 'deviceorientation') listeners.push(fn)
+    })
+    const tilt = new TiltSource(() => {})
+    tilt.setRequested(true)
+    await Promise.resolve() // let the fire-and-forget activation settle
+    expect(tilt.state).toBe('active')
+    expect(listeners).toHaveLength(1)
+    tilt.setRequested(false)
+    expect(tilt.state).toBe('idle')
+  })
+
+  it('does nothing when not requested', async () => {
+    permissionRig()
+    const tilt = new TiltSource(() => {})
+    expect(await tilt.activateFromGesture()).toBe(false)
+    expect(tilt.state).toBe('idle')
   })
 })

@@ -45,18 +45,18 @@ export class PadView {
     this.ctx2d = this.canvas.getContext('2d')
     this.layout = this.computeLayout(1, 1)
     this.field = new BrightnessField(this.layout.keys)
-    this.tracker = new TouchTracker(
-      () => this.layout,
-      () => store.state.pad,
+    this.tracker = new TouchTracker({
+      getLayout: () => this.layout,
+      getPad: () => store.state.pad,
       sink,
-      () => this.requestRender(),
+      onChange: () => this.requestRender(),
       // Every note onset drops a "pebble" whose wave spreads across the
       // lattice — at event time, so even sub-frame taps make a splash.
-      (key) => {
+      onTrigger: (key) => {
         if (store.state.appearance.ripples) this.field.poke(key.id, 1.3)
       },
-      () => this.hapticTick(),
-    )
+      onFret: () => this.hapticTick(),
+    })
     this.bindPointer()
     store.subscribe((_s, path) => {
       if (path.startsWith('pad') || path.startsWith('appearance')) {

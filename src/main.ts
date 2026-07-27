@@ -86,14 +86,12 @@ store.subscribe((_s, path) => {
 })
 
 // Device tilt feeds the engine whenever the EXPRESSION tilt routing is on.
+// The source owns its activation lifecycle; this only says what is wanted.
 const tiltSource = new TiltSource((v) => engine.setTilt(v))
 const syncTilt = () => {
-  if (store.state.expr.tilt !== 'off') {
-    void tiltSource.enable()
-  } else {
-    tiltSource.disable()
-    engine.setTilt(0)
-  }
+  const wanted = store.state.expr.tilt !== 'off'
+  tiltSource.setRequested(wanted)
+  if (!wanted) engine.setTilt(0)
 }
 store.subscribe((_s, path) => {
   if (path === 'expr.tilt') syncTilt()
@@ -104,7 +102,7 @@ syncTilt()
 // re-armed here too: iOS only grants the orientation sensor from a gesture.
 const wake = () => {
   engine.ensure()
-  syncTilt()
+  void tiltSource.activateFromGesture()
 }
 window.addEventListener('pointerdown', wake, { passive: true })
 

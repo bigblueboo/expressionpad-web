@@ -122,7 +122,7 @@ describe('KeyboardInput', () => {
   beforeEach(() => {
     layout = buildLayout(base)
     sink = new SpySink()
-    tracker = new TouchTracker(() => layout, () => pad, sink)
+    tracker = new TouchTracker({ getLayout: () => layout, getPad: () => pad, sink })
     kb = new KeyboardInput(() => layout, tracker)
   })
 

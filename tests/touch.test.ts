@@ -42,14 +42,15 @@ describe('TouchTracker', () => {
   beforeEach(() => {
     sink = new SpySink()
     pad = makePad()
-    tracker = new TouchTracker(() => layout, () => pad, sink)
+    tracker = new TouchTracker({ getLayout: () => layout, getPad: () => pad, sink })
   })
 
   it('fires onTrigger at event time for downs and drag retriggers', () => {
     const triggered: number[] = []
-    tracker = new TouchTracker(
-      () => layout, () => pad, sink, () => {}, (key) => triggered.push(key.note),
-    )
+    tracker = new TouchTracker({
+      getLayout: () => layout, getPad: () => pad, sink,
+      onTrigger: (key) => triggered.push(key.note),
+    })
     tracker.down(1, 50, 390) // C3
     tracker.up(1) // sub-frame tap: trigger already recorded
     expect(triggered).toEqual([48])
@@ -100,9 +101,10 @@ describe('TouchTracker', () => {
   it('does not inject new ripple energy while continuously crossing keys', () => {
     pad.slide = 0.5
     const triggered: number[] = []
-    tracker = new TouchTracker(
-      () => layout, () => pad, sink, () => {}, (key) => triggered.push(key.id),
-    )
+    tracker = new TouchTracker({
+      getLayout: () => layout, getPad: () => pad, sink,
+      onTrigger: (key) => triggered.push(key.id),
+    })
     tracker.down(1, 50, 390)
     tracker.move(1, 150, 390)
     tracker.move(1, 250, 390)
@@ -229,9 +231,10 @@ describe('in-key vibrato and fret crossings', () => {
   const layout = makeLayout()
 
   const make = () =>
-    new TouchTracker(
-      () => layout, () => pad, sink, () => {}, () => {}, () => frets++, () => clock,
-    )
+    new TouchTracker({
+      getLayout: () => layout, getPad: () => pad, sink,
+      onFret: () => frets++, now: () => clock,
+    })
 
   beforeEach(() => {
     sink = new SpySink()

@@ -10,6 +10,7 @@ import {
   clamp, cutoffToHz, driveCurve, harmonicAmps, impulseResponse, lerp,
   partialsToWave, velocityToGain,
 } from './dsp'
+import { pressureModulation } from './expression'
 import { midiToFreq } from '../core/notes'
 import type { Store, SynthConfig, FxConfig } from '../core/state'
 import type { VoiceSink } from './sink'
@@ -41,8 +42,6 @@ interface FxInsert {
 
 const MAX_VOICES = 10
 const MAX_LIVE_VOICES = 24
-/** Quietest a voice gets when pressure is routed to level (swell floor). */
-const EXPR_LEVEL_FLOOR = 0.3
 
 function holdAutomation(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') {
@@ -250,20 +249,13 @@ export class SynthEngine implements VoiceSink {
     this.applyLfoDepth(t)
 
     if (path.startsWith('expr')) {
-      // Routing changed — put every axis back where the new targets expect it.
+      // Routing changed — re-apply expression to every voice so abandoned
+      // destinations return to neutral, and re-seat the tilt bus gain.
       const expr = this.store.state.expr
       this.voiceBus.gain.setTargetAtTime(
         expr.tilt === 'level' ? lerp(1 - expr.tiltAmount, 1, this.tiltValue) : 1, t, 0.03,
       )
-      for (const v of this.voices.values()) {
-        v.exp.gain.setTargetAtTime(
-          expr.pressure === 'level' ? lerp(EXPR_LEVEL_FLOOR, 1, v.pressure) : 1, t, 0.03,
-        )
-        const lfoAmt = expr.pressure === 'lfo' ? v.pressure : 1
-        v.lfoAmtPitch.gain.setTargetAtTime(lfoAmt, t, 0.03)
-        v.lfoAmtFilter.gain.setTargetAtTime(lfoAmt, t, 0.03)
-        this.updateVoiceFilter(v)
-      }
+      for (const v of this.voices.values()) this.applyVoiceExpression(v)
     }
 
     if (path.includes('semi') || path.includes('tune')) {
@@ -291,18 +283,18 @@ export class SynthEngine implements VoiceSink {
     const fx = this.fx()
     const t = ctx.currentTime
 
-    const expr = this.store.state.expr
+    const mod = pressureModulation(this.store.state.expr.pressure, 0, 'synth')
     const filter = ctx.createBiquadFilter()
     filter.type = 'lowpass'
     const vca = ctx.createGain()
     vca.gain.value = 0
     const exp = ctx.createGain()
-    exp.gain.value = expr.pressure === 'level' ? EXPR_LEVEL_FLOOR : 1
+    exp.gain.value = mod.level
     filter.connect(vca).connect(exp).connect(this.synthBus)
     const lfoAmtPitch = ctx.createGain()
     const lfoAmtFilter = ctx.createGain()
-    lfoAmtPitch.gain.value = expr.pressure === 'lfo' ? 0 : 1
-    lfoAmtFilter.gain.value = expr.pressure === 'lfo' ? 0 : 1
+    lfoAmtPitch.gain.value = mod.lfo
+    lfoAmtFilter.gain.value = mod.lfo
     this.lfoPitch.connect(lfoAmtPitch)
     this.lfoFilter.connect(lfoAmtFilter).connect(filter.detune)
 
@@ -370,21 +362,18 @@ export class SynthEngine implements VoiceSink {
     const v = this.voices.get(id)
     if (!v) return
     v.pressure = clamp(value, 0, 1)
+    this.applyVoiceExpression(v)
+  }
+
+  /** The single path that lands the pressure axis on a voice — called from
+   *  note creation, pressure updates, and expr routing changes alike. */
+  private applyVoiceExpression(v: Voice): void {
     const t = this.ctx!.currentTime
-    switch (this.store.state.expr.pressure) {
-      case 'filter':
-        this.updateVoiceFilter(v)
-        break
-      case 'level':
-        v.exp.gain.setTargetAtTime(lerp(EXPR_LEVEL_FLOOR, 1, v.pressure), t, 0.03)
-        break
-      case 'lfo':
-        v.lfoAmtPitch.gain.setTargetAtTime(v.pressure, t, 0.03)
-        v.lfoAmtFilter.gain.setTargetAtTime(v.pressure, t, 0.03)
-        break
-      case 'off':
-        break
-    }
+    const mod = pressureModulation(this.store.state.expr.pressure, v.pressure, 'synth')
+    v.exp.gain.setTargetAtTime(mod.level, t, 0.03)
+    v.lfoAmtPitch.gain.setTargetAtTime(mod.lfo, t, 0.03)
+    v.lfoAmtFilter.gain.setTargetAtTime(mod.lfo, t, 0.03)
+    this.updateVoiceFilter(v)
   }
 
   /** Device-tilt modulation source, 0 (flat on a table) .. 1 (upright). */
@@ -508,9 +497,9 @@ export class SynthEngine implements VoiceSink {
     const t = this.ctx!.currentTime
     // Aftertouch pushes the cutoff up through the envelope-amount range;
     // tilt (when routed here) brightens the whole surface.
-    const press = expr.pressure === 'filter' ? v.pressure : 0
+    const mod = pressureModulation(expr.pressure, v.pressure, 'synth')
     const tilt = expr.tilt === 'filter' ? this.tiltValue * expr.tiltAmount : 0
-    const norm = clamp(s.filter.cutoff + s.filter.env * press + tilt, 0, 1)
+    const norm = clamp(s.filter.cutoff + s.filter.env * mod.filter + tilt, 0, 1)
     v.filter.frequency.setTargetAtTime(cutoffToHz(norm), t, 0.015)
     v.filter.Q.setTargetAtTime(s.filter.res * 18, t, 0.02)
   }

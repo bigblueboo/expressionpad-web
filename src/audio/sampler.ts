@@ -6,6 +6,7 @@
  * crosses into a new semitone (harp-gliss style).
  */
 import { clamp, cutoffToHz, lerp, velocityToGain } from './dsp'
+import { pressureModulation } from './expression'
 import { renderSample, SAMPLE_NAMES, USER_PRESET } from './samplegen'
 import type { Store } from '../core/state'
 import type { SynthEngine } from './engine'
@@ -22,14 +23,15 @@ interface SVoice {
   pitch: number
   vel: number
   root: number
+  pressure: number
   src: AudioBufferSourceNode
   filter: BiquadFilterNode
   vca: GainNode
+  /** Expression gain after the envelope — the pressure axis rides here. */
+  exp: GainNode
 }
 
 const MAX_LIVE_SAMPLE_VOICES = 16
-/** Quietest a voice gets when pressure is routed to level (swell floor). */
-const EXPR_LEVEL_FLOOR = 0.3
 
 function holdAutomation(param: AudioParam, time: number): void {
   if (typeof param.cancelAndHoldAtTime === 'function') {
@@ -52,10 +54,16 @@ export class SamplerEngine implements VoiceSink {
 
   constructor(private store: Store, private host: SynthEngine) {
     store.subscribe((_s, path) => {
-      if (path === 'sampler.level' && this.out && this.host.ctx) {
+      if (!this.host.ctx) return
+      if (path === 'sampler.level' && this.out) {
         this.out.gain.setTargetAtTime(
           store.state.sampler.level, this.host.ctx.currentTime, 0.02,
         )
+      }
+      if (path.startsWith('expr')) {
+        // Routing changed — re-apply expression so abandoned destinations
+        // (filter brightening, level swell) return to neutral on held voices.
+        for (const voice of this.voices.values()) this.applyVoiceExpression(voice)
       }
     })
   }
@@ -160,15 +168,18 @@ export class SamplerEngine implements VoiceSink {
 
     const vca = ctx.createGain()
     vca.gain.value = 0
-    const swell = this.store.state.expr.pressure === 'level' ? EXPR_LEVEL_FLOOR : 1
-    const peak = velocityToGain(vel) * swell
+    // The envelope carries velocity only; the expression stage after it owns
+    // everything the pressure axis does, so routing changes stay atomic.
+    const peak = velocityToGain(vel)
     const a = Math.max(0.002, s.attack)
     vca.gain.setValueAtTime(0, t)
     vca.gain.linearRampToValueAtTime(peak, t + a)
+    const exp = ctx.createGain()
+    exp.gain.value = pressureModulation(this.store.state.expr.pressure, 0, 'sampler').level
 
-    src.connect(filter).connect(vca).connect(this.out!)
+    src.connect(filter).connect(vca).connect(exp).connect(this.out!)
     src.start(t)
-    const voice: SVoice = { pitch, vel, root: entry.root, src, filter, vca }
+    const voice: SVoice = { pitch, vel, root: entry.root, pressure: 0, src, filter, vca, exp }
     src.onended = () => {
       if (this.voices.get(id) === voice) this.voices.delete(id)
       this.releaseTails.delete(voice)
@@ -176,6 +187,7 @@ export class SamplerEngine implements VoiceSink {
         src.disconnect()
         filter.disconnect()
         vca.disconnect()
+        exp.disconnect()
       } catch {
         // already torn down
       }
@@ -202,21 +214,17 @@ export class SamplerEngine implements VoiceSink {
   pressure(id: number, value: number): void {
     const v = this.voices.get(id)
     if (!v || !this.host.ctx) return
-    const t = this.host.ctx.currentTime
-    const p = clamp(value, 0, 1)
-    switch (this.store.state.expr.pressure) {
-      case 'filter':
-        v.filter.frequency.setTargetAtTime(cutoffToHz(0.8 + 0.2 * p), t, 0.015)
-        // Gentle swell into the touch.
-        v.vca.gain.setTargetAtTime(velocityToGain(v.vel) * (1 + 0.35 * p), t, 0.03)
-        break
-      case 'level':
-        v.vca.gain.setTargetAtTime(velocityToGain(v.vel) * lerp(EXPR_LEVEL_FLOOR, 1, p), t, 0.03)
-        break
-      default:
-        // 'lfo' has no meaning for samples; 'off' ignores pressure.
-        break
-    }
+    v.pressure = clamp(value, 0, 1)
+    this.applyVoiceExpression(v)
+  }
+
+  /** The single path that lands the pressure axis on a voice — called from
+   *  note creation, pressure updates, and expr routing changes alike. */
+  private applyVoiceExpression(v: SVoice): void {
+    const t = this.host.ctx!.currentTime
+    const mod = pressureModulation(this.store.state.expr.pressure, v.pressure, 'sampler')
+    v.exp.gain.setTargetAtTime(mod.level, t, 0.03)
+    v.filter.frequency.setTargetAtTime(cutoffToHz(0.8 + 0.2 * mod.filter), t, 0.015)
   }
 
   noteOff(id: number): void {
@@ -268,6 +276,7 @@ export class SamplerEngine implements VoiceSink {
       voice.src.disconnect()
       voice.filter.disconnect()
       voice.vca.disconnect()
+      voice.exp.disconnect()
     } catch {
       // already torn down
     }

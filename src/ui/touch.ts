@@ -39,21 +39,39 @@ export interface ActiveTouch {
   lastMs: number
 }
 
+export interface TouchTrackerOptions {
+  getLayout: () => Layout
+  getPad: () => PadConfig
+  sink: VoiceSink
+  onChange?: () => void
+  /** Fires at event time for every note onset (down or drag retrigger). */
+  onTrigger?: (key: KeyShape) => void
+  /** Fires whenever a voice crosses onto a new semitone (fret haptics). */
+  onFret?: () => void
+  now?: () => number
+}
+
 export class TouchTracker {
   readonly active = new Map<number, ActiveTouch>()
 
-  constructor(
-    private getLayout: () => Layout,
-    private getPad: () => PadConfig,
-    private sink: VoiceSink,
-    private onChange: () => void = () => {},
-    /** Fires at event time for every note onset (down or drag retrigger). */
-    private onTrigger: (key: KeyShape) => void = () => {},
-    /** Fires whenever a voice crosses onto a new semitone (fret haptics). */
-    private onFret: () => void = () => {},
-    private now: () => number = () =>
-      typeof performance !== 'undefined' ? performance.now() : Date.now(),
-  ) {}
+  private getLayout: () => Layout
+  private getPad: () => PadConfig
+  private sink: VoiceSink
+  private onChange: () => void
+  private onTrigger: (key: KeyShape) => void
+  private onFret: () => void
+  private now: () => number
+
+  constructor(opts: TouchTrackerOptions) {
+    this.getLayout = opts.getLayout
+    this.getPad = opts.getPad
+    this.sink = opts.sink
+    this.onChange = opts.onChange ?? (() => {})
+    this.onTrigger = opts.onTrigger ?? (() => {})
+    this.onFret = opts.onFret ?? (() => {})
+    this.now = opts.now
+      ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()))
+  }
 
   down(id: number, x: number, y: number): void {
     const layout = this.getLayout()
