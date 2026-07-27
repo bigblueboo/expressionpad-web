@@ -106,6 +106,6 @@ xcodebuild -project ios/ExpressionPad.xcodeproj -scheme ExpressionPad \
   -destination 'generic/platform=iOS Simulator' build
 ```
 
-Status: all 146 core tests pass; the app target compiles and links cleanly
+Status: all 149 core tests pass; the app target compiles and links cleanly
 against the iOS 18 simulator SDK (verified with the toolchain compiler
 directly — the `xcodebuild` path just needs the license accepted once).

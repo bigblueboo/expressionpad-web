@@ -586,3 +586,58 @@ struct ExpressionRoutingTests {
         }
     }
 }
+
+struct ExpressionRerouteTests {
+    /// A constant looped sample so gain changes dominate the RMS.
+    private func startLoopedSampler(
+        _ kernel: SynthKernel, _ buf: UnsafeBufferPointer<Float>, route: Float
+    ) {
+        kernel.events.push(.sample(SampleRef(
+            data: buf.baseAddress!, count: Int32(buf.count), root: 60,
+            loopStart: 0, loopEnd: Int32(buf.count)
+        )))
+        kernel.events.push(.param(.exprPressure, route))
+        kernel.events.push(.param(.reverbOn, 0))
+        kernel.events.push(.noteOn(dest: .sampler, id: 1, pitch: 60, vel: 1))
+    }
+
+    @Test func samplerEnvelopePeakIsVelocityOnlyRegardlessOfRouting() {
+        let kernel = SynthKernel(sampleRate: SR)
+        let data = [Float](repeating: 0.5, count: 4800)
+        data.withUnsafeBufferPointer { buf in
+            startLoopedSampler(kernel, buf, route: 1) // level
+            _ = kernel.renderBuffer(9600)
+            let voice = kernel.sVoices.first { $0.active }!
+            #expect(abs(voice.peak - Float(velocityToGain(1))) < 1e-6)
+        }
+    }
+
+    @Test func reroutingAHeldSamplerVoiceReturnsToNeutral() {
+        let kernel = SynthKernel(sampleRate: SR)
+        let data = [Float](repeating: 0.5, count: 4800)
+        data.withUnsafeBufferPointer { buf in
+            startLoopedSampler(kernel, buf, route: 1) // level, no pressure → floor
+            _ = kernel.renderBuffer(9600)
+            let (floored, _) = kernel.renderBuffer(4800)
+            // Re-route to off mid-note: the abandoned level floor must release.
+            kernel.events.push(.param(.exprPressure, 3))
+            _ = kernel.renderBuffer(9600)
+            let (neutral, _) = kernel.renderBuffer(4800)
+            #expect(allFinite(neutral))
+            #expect(rms(neutral[...]) > rms(floored[...]) * 2)
+        }
+    }
+
+    @Test func reroutingAHeldSynthVoiceReturnsToNeutral() {
+        let kernel = SynthKernel(sampleRate: SR)
+        kernel.events.push(.param(.exprPressure, 1)) // level, no pressure → floor
+        kernel.events.push(.noteOn(dest: .synth, id: 1, pitch: 60, vel: 1))
+        _ = kernel.renderBuffer(9600)
+        let (floored, _) = kernel.renderBuffer(4800)
+        kernel.events.push(.param(.exprPressure, 3)) // off
+        _ = kernel.renderBuffer(9600)
+        let (neutral, _) = kernel.renderBuffer(4800)
+        #expect(allFinite(neutral))
+        #expect(rms(neutral[...]) > rms(floored[...]) * 2)
+    }
+}

@@ -26,14 +26,11 @@ struct KernelParams {
     var samplerLevel: Float = 0.8, samplerAttack: Float = 0.005, samplerRelease: Float = 0.35
     var samplerRetrig: Float = 0
     var slide: Float = 0.35
-    var exprPressure: Float = 0 // 0 filter, 1 level, 2 lfo, 3 off
-    var exprTilt: Float = 0 // 0 off, 1 filter, 2 level, 3 lfo
+    var pressureRoute: KernelPressureRoute = .filter
+    var tiltRoute: KernelTiltRoute = .off
     var exprTiltAmount: Float = 0.5
     var tilt: Float = 0
 }
-
-/// Quietest a voice gets when pressure is routed to level (swell floor).
-private let EXPR_LEVEL_FLOOR: Float = 0.3
 
 private let ENV_ATTACK: Int32 = 1
 private let ENV_SUSTAIN: Int32 = 2
@@ -105,8 +102,8 @@ final class SamplerVoice {
     var pitch: Float = 60
     var vel: Float = 0.8
     var pressure: Float = 0
-    /// Unscaled velocity gain; `peak` folds in the pressure→level floor.
-    var velGain: Float = 0
+    /// Expression gain after the envelope — the pressure axis rides here.
+    var expSm = OnePole(1)
     var pos: Double = 0
     var centsSm = OnePole(0)
     var gain: Float = 0
@@ -318,8 +315,8 @@ public final class SynthKernel {
         case .samplerRelease: params.samplerRelease = v
         case .samplerRetrig: params.samplerRetrig = v
         case .slide: params.slide = v
-        case .exprPressure: params.exprPressure = v
-        case .exprTilt: params.exprTilt = v
+        case .exprPressure: params.pressureRoute = KernelPressureRoute(payload: v)
+        case .exprTilt: params.tiltRoute = KernelTiltRoute(payload: v)
         case .exprTiltAmount: params.exprTiltAmount = v
         case .tilt: params.tilt = clamp(v, 0, 1)
         }
@@ -419,11 +416,11 @@ public final class SynthKernel {
         v.g1.snap(params.gen1Level)
         v.g2.snap(params.gen2Level)
         v.filter.reset()
-        let norm = clamp(params.filterCutoff + filterPressTerm(v.pressure) + filterTiltTerm(), 0, 1)
-        v.cutoffSm.snap(Float(cutoffToHz(Double(norm))))
+        let mod = pressureModulation(params.pressureRoute, v.pressure, .synth)
+        v.cutoffSm.snap(Float(cutoffToHz(Double(synthCutoffNorm(mod)))))
         v.qSm.snap(params.filterRes * 18)
-        v.expSm.snap(params.exprPressure == 1 ? EXPR_LEVEL_FLOOR : 1)
-        v.lfoAmtSm.snap(params.exprPressure == 2 ? 0 : 1)
+        v.expSm.snap(mod.level)
+        v.lfoAmtSm.snap(mod.lfo)
 
         v.envPeak = Float(velocityToGain(Double(start.vel)))
         v.env = 0
@@ -523,8 +520,10 @@ public final class SynthKernel {
         v.pressure = 0
         v.pos = 0
         v.centsSm.snap((start.pitch - start.sample.root) * 100)
-        v.velGain = Float(velocityToGain(Double(start.vel)))
-        v.peak = v.velGain * (params.exprPressure == 1 ? EXPR_LEVEL_FLOOR : 1)
+        // The envelope carries velocity only; the expression smoother after it
+        // owns everything the pressure axis does, so route changes stay atomic.
+        v.peak = Float(velocityToGain(Double(start.vel)))
+        v.expSm.snap(pressureModulation(params.pressureRoute, v.pressure, .sampler).level)
         v.gain = 0
         v.stage = ENV_ATTACK
         let a = max(0.002, params.samplerAttack)
@@ -610,7 +609,7 @@ public final class SynthKernel {
         lfoPhase += lfoFreq * dt
         if lfoPhase >= 1 { lfoPhase -= floor(lfoPhase) }
         // Tilt (when routed here) adds LFO depth on top of the knob.
-        let tiltLfo = params.exprTilt == 3 ? params.tilt * params.exprTiltAmount : 0
+        let tiltLfo = params.tiltRoute == .lfo ? params.tilt * params.exprTiltAmount : 0
         let lfoDepth = clamp(params.lfoDepth + tiltLfo, 0, 1)
         lfoPitchGainSm.target = params.lfoTargetFilter < 0.5 ? lfoDepth * 60 : 0
         lfoFilterGainSm.target = params.lfoTargetFilter >= 0.5 ? lfoDepth * 2400 : 0
@@ -644,7 +643,7 @@ public final class SynthKernel {
         reverb.update(dt: dt, fdbk: params.reverbFdbk,
                       wet: params.reverbOn > 0.5 ? params.reverbMix : 0)
         // Tilt→level rides the shared bus pre-FX, like the web voiceBus.
-        busOut.target = params.exprTilt == 2
+        busOut.target = params.tiltRoute == .level
             ? lerp(1 - params.exprTiltAmount, 1, params.tilt)
             : 1
         let busGain = busOut.step(a03)
@@ -661,14 +660,11 @@ public final class SynthKernel {
         }
     }
 
-    /// Cutoff push from pressure when the pressure axis is routed to filter.
-    private func filterPressTerm(_ pressure: Float) -> Float {
-        params.exprPressure == 0 ? params.filterEnv * pressure : 0
-    }
-
-    /// Cutoff shift from device tilt when the tilt axis is routed to filter.
-    private func filterTiltTerm() -> Float {
-        params.exprTilt == 1 ? params.tilt * params.exprTiltAmount : 0
+    /// Normalized synth cutoff: base + pressure push (through the envelope
+    /// amount) + tilt brightening when those axes are routed to the filter.
+    private func synthCutoffNorm(_ mod: PressureModulation) -> Float {
+        let tilt = params.tiltRoute == .filter ? params.tilt * params.exprTiltAmount : 0
+        return clamp(params.filterCutoff + params.filterEnv * mod.filter + tilt, 0, 1)
     }
 
     private func renderSynthVoice(
@@ -681,14 +677,14 @@ public final class SynthKernel {
         let g1 = v.g1.step(a02)
         let g2 = v.g2.step(a02)
 
-        // Expression routing: pressure swells level or the per-voice LFO send.
-        v.expSm.target = params.exprPressure == 1 ? lerp(EXPR_LEVEL_FLOOR, 1, v.pressure) : 1
+        // Expression routing: one policy call decides what pressure does.
+        let mod = pressureModulation(params.pressureRoute, v.pressure, .synth)
+        v.expSm.target = mod.level
         let vOut = outGain * v.expSm.step(a03)
-        v.lfoAmtSm.target = params.exprPressure == 2 ? v.pressure : 1
+        v.lfoAmtSm.target = mod.lfo
         let lfoAmt = v.lfoAmtSm.step(a03)
 
-        let norm = clamp(params.filterCutoff + filterPressTerm(v.pressure) + filterTiltTerm(), 0, 1)
-        v.cutoffSm.target = Float(cutoffToHz(Double(norm)))
+        v.cutoffSm.target = Float(cutoffToHz(Double(synthCutoffNorm(mod))))
         v.qSm.target = params.filterRes * 18
         let cutoffHz = v.cutoffSm.step(a015) * exp2(lfoFilterCents * lfoAmt / 1200)
         v.filter.setLowpass(freq: cutoffHz, qDb: v.qSm.step(a02), sampleRate: sr)
@@ -772,23 +768,15 @@ public final class SynthKernel {
         let cents = v.centsSm.step(glideAlpha)
         let rate = Double(exp2(cents / 1200))
 
-        // Pressure routing: filter keeps the classic brighten+gentle-swell;
-        // level is a pure volume swell from the floor; lfo/off ignore pressure.
-        let pressToFilter = params.exprPressure == 0
-        v.cutoffSm.target = Float(cutoffToHz(0.8 + (pressToFilter ? 0.2 * Double(v.pressure) : 0)))
+        // Expression routing: one policy call decides what pressure does.
+        let mod = pressureModulation(params.pressureRoute, v.pressure, .sampler)
+        v.cutoffSm.target = Float(cutoffToHz(Double(0.8 + 0.2 * mod.filter)))
         // Web Audio's default BiquadFilter Q is 1 (dB for lowpass).
         v.filter.setLowpass(freq: v.cutoffSm.step(a015), qDb: 1, sampleRate: sr)
 
-        let swellTarget: Float
-        if pressToFilter {
-            // Swell toward peak·(1+0.35·p), tau 0.03 (sustain stage only).
-            swellTarget = v.velGain * (1 + 0.35 * v.pressure)
-        } else if params.exprPressure == 1 {
-            swellTarget = v.velGain * lerp(EXPR_LEVEL_FLOOR, 1, v.pressure)
-        } else {
-            swellTarget = v.velGain
-        }
-        let swellAlpha = smoothingAlpha(dt: 1 / sr, tau: 0.03)
+        v.expSm.target = mod.level
+        let vOut = outGain * v.expSm.step(a03)
+        let sustainAlpha = smoothingAlpha(dt: 1 / sr, tau: 0.03)
         let retrigAlpha = smoothingAlpha(dt: 1 / sr, tau: 0.008)
 
         for i in 0..<n {
@@ -818,7 +806,7 @@ public final class SynthKernel {
                     v.stage = ENV_SUSTAIN
                 }
             case ENV_SUSTAIN:
-                v.gain += (swellTarget - v.gain) * swellAlpha
+                v.gain += (v.peak - v.gain) * sustainAlpha
             case ENV_RETRIG_FADE:
                 v.gain += (0 - v.gain) * retrigAlpha
                 v.killSamples -= 1
@@ -829,7 +817,7 @@ public final class SynthKernel {
             case ENV_STEAL_FADE:
                 v.gain = max(0, v.gain - v.stealStep)
                 v.killSamples -= 1
-                bus[i] += v.filter.process(sample) * v.gain * outGain
+                bus[i] += v.filter.process(sample) * v.gain * vOut
                 if v.killSamples <= 0 {
                     if let pending = v.pendingStart {
                         startSamplerVoice(v, pending)
@@ -847,7 +835,7 @@ public final class SynthKernel {
                     return
                 }
             }
-            bus[i] += v.filter.process(sample) * v.gain * outGain
+            bus[i] += v.filter.process(sample) * v.gain * vOut
             v.renderedSamples += 1
             if v.pendingRelease, v.renderedSamples >= MIN_ONSET_SAMPLES {
                 beginSamplerRelease(v)

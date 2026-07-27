@@ -40,6 +40,7 @@ struct ExpressionPadApp: App {
     @StateObject private var audio: AudioEngine
     @StateObject private var midi: MidiCenter
     private let router: Router
+    private let tilt: MotionTiltSource
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -56,10 +57,19 @@ struct ExpressionPadApp: App {
 
         midi.attachInput(to: LocalVoice(store: store, synth: audio.synthSink, sampler: audio.samplerSink))
 
+        // Device tilt feeds the kernel whenever the EXPRESSION tilt routing is
+        // on. The source owns the sensor; the app only says what is wanted.
+        let tilt = MotionTiltSource { audio.kernel.events.push(.param(.tilt, $0)) }
+        tilt.setRequested(store.state.expr.tilt != .off)
+        store.subscribe { state, path in
+            if path == "expr.tilt" { tilt.setRequested(state.expr.tilt != .off) }
+        }
+
         _store = StateObject(wrappedValue: store)
         _audio = StateObject(wrappedValue: audio)
         _midi = StateObject(wrappedValue: midi)
         self.router = router
+        self.tilt = tilt
     }
 
     var body: some Scene {
@@ -73,9 +83,13 @@ struct ExpressionPadApp: App {
                     if phase == .background {
                         router.allOff()
                         audio.stop()
+                        tilt.setApplicationActive(false)
                         store.flushSave()
                     }
-                    if phase == .active { audio.start() }
+                    if phase == .active {
+                        audio.start()
+                        tilt.setApplicationActive(true)
+                    }
                 }
         }
     }
