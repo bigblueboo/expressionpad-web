@@ -10,3 +10,8 @@ dist/
 ios/Core/.build/
 ios/**/xcuserdata/
 ios/DerivedData/
+
+# Agent research/workflow outputs and scratch files — not app code
+/marketing/
+/outputs/
+/tmp/
