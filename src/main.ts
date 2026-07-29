@@ -86,13 +86,10 @@ store.subscribe((_s, path) => {
 })
 
 // Device tilt feeds the engine whenever the EXPRESSION tilt routing is on.
-// The source owns its activation lifecycle; this only says what is wanted.
+// The source owns its whole lifecycle, re-centering to 0 on deactivation
+// included; this only says what is wanted.
 const tiltSource = new TiltSource((v) => engine.setTilt(v))
-const syncTilt = () => {
-  const wanted = store.state.expr.tilt !== 'off'
-  tiltSource.setRequested(wanted)
-  if (!wanted) engine.setTilt(0)
-}
+const syncTilt = () => tiltSource.setRequested(store.state.expr.tilt !== 'off')
 store.subscribe((_s, path) => {
   if (path === 'expr.tilt') syncTilt()
 })

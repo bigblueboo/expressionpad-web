@@ -141,3 +141,16 @@ describe('TiltSource activation lifecycle', () => {
     expect(tilt.state).toBe('idle')
   })
 })
+
+describe('TiltSource neutralization', () => {
+  it('re-centers the axis itself on deactivation — callers never reset it', () => {
+    vi.stubGlobal('DeviceOrientationEvent', {}) // no permission gate
+    const seen: number[] = []
+    const tilt = new TiltSource((v) => seen.push(v))
+    tilt.setRequested(true)
+    for (let i = 0; i < 5; i++) tilt.handle(90, 0) // axis well above zero
+    expect(seen.at(-1)).toBeGreaterThan(0)
+    tilt.setRequested(false)
+    expect(seen.at(-1)).toBe(0)
+  })
+})

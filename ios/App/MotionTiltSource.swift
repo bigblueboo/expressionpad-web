@@ -30,7 +30,8 @@ final class MotionTiltSource {
 
     private func sync() {
         let wanted = requested && applicationActive
-        if wanted && motion.isDeviceMotionAvailable && !motion.isDeviceMotionActive {
+        if wanted {
+            guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
             motion.deviceMotionUpdateInterval = 1.0 / 30
             motion.startDeviceMotionUpdates(to: .main) { [weak self] dm, _ in
                 guard let self, let gravity = dm?.gravity else { return }
@@ -40,8 +41,10 @@ final class MotionTiltSource {
                 self.smoothed += (upright - self.smoothed) * 0.25
                 self.onTilt(Float(self.smoothed))
             }
-        } else if !wanted && motion.isDeviceMotionActive {
-            motion.stopDeviceMotionUpdates()
+        } else {
+            // Deactivation owns re-centering, whether or not the sensor ever
+            // started: callers never reset the axis themselves.
+            if motion.isDeviceMotionActive { motion.stopDeviceMotionUpdates() }
             smoothed = 0
             onTilt(0)
         }

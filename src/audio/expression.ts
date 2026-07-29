@@ -38,7 +38,14 @@ export function pressureModulation(
       return { filter: 0, level: lerp(EXPR_LEVEL_FLOOR, 1, p), lfo: 1 }
     case 'lfo':
       return { filter: 0, level: 1, lfo: profile === 'synth' ? p : 1 }
-    default:
+    case 'off':
       return NEUTRAL_MODULATION
+    default:
+      // Exhaustive: a new PressureTarget must be routed here explicitly.
+      return assertNever(route)
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled pressure route: ${String(value)}`)
 }

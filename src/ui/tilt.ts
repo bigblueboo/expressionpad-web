@@ -102,7 +102,10 @@ export class TiltSource {
       this.listener = null
     }
     this.smoothed = 0
+    this.lastEmit = -Infinity
     this.tiltState = 'idle'
+    // Deactivation owns re-centering: callers never reset the axis themselves.
+    this.onTilt(0)
   }
 
   /** Fold beta/gamma into uprightness and emit smoothed + rate-limited. */
