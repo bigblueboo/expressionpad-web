@@ -4,6 +4,10 @@ Recovered material from reviews and App Store listings of the original iOS
 app (mode of expression, LLC; released 2017-09-12, last update 1.3.1,
 2020-04-13; 4.62★ from 68 ratings).
 
+This file is ground truth for the *original* app's look and behavior, plus
+the recreation's deliberate deviations. The design of the current system
+itself is documented in [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
+
 ## Sources
 
 - AudioKit Pro feature: <https://audiokitpro.com/expressionpad/>

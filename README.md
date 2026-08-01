@@ -94,11 +94,22 @@ per-touch with `latencyHint: 'interactive'`.
 
 ```
 src/core    notes, scales, layout geometry, state store, presets
-src/audio   pure DSP math, synth engine, voice routing
+src/audio   pure DSP math, synth engine, voice routing, expression policy
 src/midi    Web MIDI out (MPE) + in
-src/ui      canvas pad, touch tracking, widgets, control panel, color schemes
-ios/App     SwiftUI/UIKit app, AVAudioEngine bridge, CoreMIDI
+src/ui      canvas pad, touch tracking, tilt source, widgets, control panel
+ios/App     SwiftUI/UIKit app, AVAudioEngine bridge, CoreMIDI, motion source
 ios/Core    allocation-free Swift DSP kernel and cross-platform core logic
 tests       Vitest web regression suite
 reference   screenshots of the original app + rendered checks of this build
 ```
+
+## Design docs
+
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the current system's design:
+  dataflow, state model, layout engine, interaction model, expression
+  system, audio engines, and the cross-platform parity conventions.
+- [`reference/DESIGN.md`](reference/DESIGN.md) — the original 2017 app
+  (recovered reference material) and this recreation's deliberate
+  deviations from it.
+- [`ios/README.md`](ios/README.md) — the native port's stack choices,
+  real-time architecture, and its own deviations.
