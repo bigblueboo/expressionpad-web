@@ -9,7 +9,7 @@ import { clamp, lerp } from './dsp'
 import type { PressureTarget } from '../core/state'
 
 /** Quietest a voice gets when pressure is routed to level (swell floor). */
-export const EXPR_LEVEL_FLOOR = 0.3
+const EXPR_LEVEL_FLOOR = 0.3
 
 export type VoiceProfile = 'synth' | 'sampler'
 
@@ -22,7 +22,7 @@ export interface PressureModulation {
   lfo: number
 }
 
-export const NEUTRAL_MODULATION: PressureModulation = { filter: 0, level: 1, lfo: 1 }
+const NEUTRAL_MODULATION: PressureModulation = { filter: 0, level: 1, lfo: 1 }
 
 export function pressureModulation(
   route: PressureTarget,

@@ -62,8 +62,10 @@ export class SamplerEngine implements VoiceSink {
       }
       if (path.startsWith('expr')) {
         // Routing changed — re-apply expression so abandoned destinations
-        // (filter brightening, level swell) return to neutral on held voices.
+        // (filter brightening, level swell) return to neutral. Release tails
+        // included, matching the kernel's per-block policy.
         for (const voice of this.voices.values()) this.applyVoiceExpression(voice)
+        for (const voice of this.releaseTails) this.applyVoiceExpression(voice)
       }
     })
   }

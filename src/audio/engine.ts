@@ -249,13 +249,12 @@ export class SynthEngine implements VoiceSink {
     this.applyLfoDepth(t)
 
     if (path.startsWith('expr')) {
-      // Routing changed — re-apply expression to every voice so abandoned
+      // Routing changed — re-apply expression to every voice (release tails
+      // included, matching the kernel's per-block policy) so abandoned
       // destinations return to neutral, and re-seat the tilt bus gain.
-      const expr = this.store.state.expr
-      this.voiceBus.gain.setTargetAtTime(
-        expr.tilt === 'level' ? lerp(1 - expr.tiltAmount, 1, this.tiltValue) : 1, t, 0.03,
-      )
+      this.applyTiltBus(t)
       for (const v of this.voices.values()) this.applyVoiceExpression(v)
+      for (const v of this.releaseTails) this.applyVoiceExpression(v)
     }
 
     if (path.includes('semi') || path.includes('tune')) {
@@ -389,7 +388,7 @@ export class SynthEngine implements VoiceSink {
         for (const voice of this.voices.values()) this.updateVoiceFilter(voice)
         break
       case 'level':
-        this.voiceBus.gain.setTargetAtTime(lerp(1 - expr.tiltAmount, 1, v), t, 0.03)
+        this.applyTiltBus(t)
         break
       case 'lfo':
         this.applyLfoDepth(t)
@@ -399,8 +398,12 @@ export class SynthEngine implements VoiceSink {
     }
   }
 
-  get tilt(): number {
-    return this.tiltValue
+  /** Seat the shared bus gain for the tilt→level routing (1 when not routed). */
+  private applyTiltBus(t: number): void {
+    const expr = this.store.state.expr
+    this.voiceBus.gain.setTargetAtTime(
+      expr.tilt === 'level' ? lerp(1 - expr.tiltAmount, 1, this.tiltValue) : 1, t, 0.03,
+    )
   }
 
   noteOff(id: number): void {
