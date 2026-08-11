@@ -1,6 +1,7 @@
 /// Control panel: top tab bar (SYNTH | SMPLR | FX | PAD | MIDI) with a
 /// collapse chevron, and a sliding panel of grouped controls — the port of
 /// controls.ts.
+import CoreAudioKit
 import SwiftUI
 import UniformTypeIdentifiers
 import ExpressionPadCore
@@ -361,16 +362,21 @@ private struct MidiPage: View {
     let audio: AudioEngine
     @ObservedObject var midi: MidiCenter
 
+    @State private var pairingBluetooth = false
+
     var body: some View {
         Flow {
             PanelGroup(title: "MIDI OUT") {
                 ToggleSquare(isOn: store.binding(\.midi.outEnabled), label: "active")
                 SelectMenu(
                     selection: store.binding(\.midi.outputId), label: "output",
-                    options: portOptions(midi.destinations)
+                    // The "expressionPad" virtual source always broadcasts, so
+                    // the controller works with no direct destination at all.
+                    options: portOptions(midi.destinations, emptyLabel: "Virtual out only")
                 )
                 StepperControl(value: store.binding(\.midi.bendRange), label: "bend rng", min: 1, max: 96)
                 ToggleSquare(isOn: store.binding(\.midi.sendY), label: "send cc74")
+                ActionButton(label: "bluetooth") { pairingBluetooth = true }
             }
             PanelGroup(title: "MIDI IN") {
                 ToggleSquare(isOn: store.binding(\.midi.inEnabled), label: "active")
@@ -387,10 +393,15 @@ private struct MidiPage: View {
                     .frame(maxWidth: 180, alignment: .leading)
             }
         }
+        .sheet(isPresented: $pairingBluetooth) {
+            BluetoothMidiPairingView()
+        }
     }
 
-    private func portOptions(_ ports: [MidiEndpoint]) -> [(value: String, text: String)] {
-        var options: [(value: String, text: String)] = [("", ports.isEmpty ? "No devices" : "Auto")]
+    private func portOptions(
+        _ ports: [MidiEndpoint], emptyLabel: String = "No devices"
+    ) -> [(value: String, text: String)] {
+        var options: [(value: String, text: String)] = [("", ports.isEmpty ? emptyLabel : "Auto")]
         options.append(contentsOf: ports.map { ($0.id, $0.name) })
         return options
     }
@@ -400,4 +411,14 @@ private struct MidiPage: View {
             ? "MIDI ready — latency \(audio.latencyMs)ms"
             : "CoreMIDI unavailable."
     }
+}
+
+/// System sheet for discovering and pairing Bluetooth LE MIDI devices, so
+/// the controller can drive BLE synths without a companion app.
+private struct BluetoothMidiPairingView: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> CABTMIDICentralViewController {
+        CABTMIDICentralViewController()
+    }
+
+    func updateUIViewController(_ vc: CABTMIDICentralViewController, context: Context) {}
 }

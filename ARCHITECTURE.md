@@ -219,14 +219,30 @@ throttle to one tick per 40 ms so fast glisses don't smear.
 
 ## MIDI
 
+**expressionPad is a controller first.** MIDI *output* is a primary
+product surface and gets the engineering investment; MIDI *input* exists
+so the internal synth can be exercised from a keyboard (note on/off only)
+and is deliberately minimal. Do not grow the input path toward
+"sound module" without revisiting this stance.
+
 MPE-style output: master channel 0, rotating member channels 1–15 (one per
 touch, oldest stolen when exhausted), per-note pitch bend against a
-configurable bend range (default ±48, negotiated via RPN on every member
-channel), channel pressure for the pressure axis, optional CC74 for the Y
-axis. Continuous pitch (slides *and* vibrato) rides the same glide → bend
-path as the internal synth. MIDI input drives whichever local voice is
-active; local sound can be switched off to use the pad as a pure
-controller. Device changes mid-performance release everything first.
+configurable bend range (default ±48 — the MPE-recommended member default —
+negotiated via RPN on every member channel), channel pressure for the
+pressure axis, optional CC74 for the Y axis. Continuous pitch (slides
+*and* vibrato) rides the same glide → bend path as the internal synth.
+Bend-range changes mid-performance re-negotiate the RPN and re-send every
+held note's bend so nothing jumps. Device changes mid-performance release
+everything first. Local sound can be switched off to use the pad as a
+pure controller.
+
+Transport per platform: the web build uses Web MIDI (Chromium browsers;
+HTTPS or localhost required — route into DAWs via an IAC bus on macOS or
+loopMIDI on Windows). The iOS build uses CoreMIDI: a published
+**"expressionPad" virtual source** (stable unique ID, always broadcasting —
+other apps simply select it as their input), direct sends to any
+enumerated destination, Bluetooth LE MIDI (pairing sheet in the MIDI tab),
+and the RTP network session.
 
 ## Rendering
 

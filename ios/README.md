@@ -81,7 +81,11 @@ Mirroring the spirit of `DESIGN.md`'s deviations section:
   same guardrail.
 - **Web MIDI device pickers become CoreMIDI** destinations/sources, and the
   original's network session comes back for free (`MIDINetworkSession`),
-  un-deviating DESIGN.md's web-only substitution.
+  un-deviating DESIGN.md's web-only substitution. The app also publishes an
+  **"expressionPad" virtual source** (stable unique ID) that always carries
+  the full MPE stream — other apps select it as an input with no routing —
+  and the MIDI tab hosts a Bluetooth LE MIDI pairing sheet
+  (`CABTMIDICentralViewController`).
 - **Typing-keyboard layouts** (Keys Chromatic / Keys Piano) work from
   hardware keyboards on iPad via `pressesBegan`.
 - **URL-parameter config** has no meaning in an app and is dropped.

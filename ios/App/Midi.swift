@@ -17,6 +17,9 @@ final class MidiCenter: ObservableObject {
     private var client = MIDIClientRef()
     private var outPort = MIDIPortRef()
     private var inPort = MIDIPortRef()
+    /// Published virtual source: other apps select "expressionPad" as a MIDI
+    /// input and hear everything the controller sends, no routing required.
+    private var virtualSource: MIDIEndpointRef = 0
     private var connectedSource: MIDIEndpointRef = 0
     /// Resolved output endpoint, so per-message sends (glides run at 120 Hz)
     /// don't re-enumerate CoreMIDI. Cleared on device or selection changes.
@@ -52,6 +55,7 @@ final class MidiCenter: ObservableObject {
             [weak self] eventList, _ in
             self?.handleEventList(eventList)
         }
+        createVirtualSource()
         out.sender = { [weak self] words, destinationId in
             self?.sendWords(words, destinationId: destinationId)
         }
@@ -84,6 +88,28 @@ final class MidiCenter: ObservableObject {
         syncInputConnection()
     }
 
+    /// Publish the "expressionPad" virtual source with a stable unique ID so
+    /// other apps' saved connections survive relaunches.
+    private func createVirtualSource() {
+        var source = MIDIEndpointRef()
+        guard MIDISourceCreateWithProtocol(
+            client, "expressionPad" as CFString, ._1_0, &source
+        ) == noErr else { return }
+        let key = "expressionpad-virtual-source-uid"
+        let stored = UserDefaults.standard.integer(forKey: key)
+        if stored != 0 {
+            // Best effort: the system rejects the ID if another endpoint owns it.
+            MIDIObjectSetIntegerProperty(
+                source, kMIDIPropertyUniqueID, Int32(truncatingIfNeeded: stored)
+            )
+        } else {
+            var uid: Int32 = 0
+            MIDIObjectGetIntegerProperty(source, kMIDIPropertyUniqueID, &uid)
+            UserDefaults.standard.set(Int(uid), forKey: key)
+        }
+        virtualSource = source
+    }
+
     func refreshEndpoints() {
         if out.hasActive { out.allOff() }
         cachedDestination = nil
@@ -100,6 +126,7 @@ final class MidiCenter: ObservableObject {
         var srcs: [MidiEndpoint] = []
         for i in 0..<MIDIGetNumberOfSources() {
             let ep = MIDIGetSource(i)
+            if ep == virtualSource { continue } // never offer our own output as an input
             srcs.append(MidiEndpoint(id: uniqueId(ep), name: displayName(ep)))
         }
         sources = srcs
@@ -120,7 +147,10 @@ final class MidiCenter: ObservableObject {
     }
 
     private func destination(id explicitId: String? = nil) -> MIDIEndpointRef? {
-        if let explicitId, !explicitId.isEmpty {
+        if let explicitId {
+            // "" is the virtual-source-only sentinel: the voice was started
+            // with no direct destination and must never adopt one mid-note.
+            guard !explicitId.isEmpty else { return nil }
             if let cached = destinationsById[explicitId] { return cached }
             for i in 0..<MIDIGetNumberOfDestinations() {
                 let ep = MIDIGetDestination(i)
@@ -146,15 +176,24 @@ final class MidiCenter: ObservableObject {
         return found
     }
 
+    /// Send to the resolved destination AND broadcast on the virtual source.
+    /// Returns the direct destination's id, "" when only the virtual source
+    /// carried the message, or nil when MIDI is entirely unavailable.
     @discardableResult
     private func sendWords(_ words: [UInt32], destinationId: String?) -> String? {
-        guard available, !words.isEmpty, let dest = destination(id: destinationId) else { return nil }
+        guard available, !words.isEmpty else { return nil }
         var list = MIDIEventList()
         var packet = MIDIEventListInit(&list, ._1_0)
         for word in words {
             packet = MIDIEventListAdd(&list, MemoryLayout<MIDIEventList>.size, packet, 0, 1, [word])
         }
-        guard MIDISendEventList(outPort, dest, &list) == noErr else { return nil }
+        if virtualSource != 0 {
+            MIDIReceivedEventList(virtualSource, &list)
+        }
+        guard let dest = destination(id: destinationId),
+              MIDISendEventList(outPort, dest, &list) == noErr else {
+            return virtualSource != 0 ? "" : nil
+        }
         return uniqueId(dest)
     }
 
@@ -314,7 +353,9 @@ final class MidiOut: VoiceSink {
     func allOff() {
         var destinationIds = Set(active.values.map(\.destinationId))
         for id in Array(active.keys) { noteOff(id) }
-        if let current = destinationResolver?() { destinationIds.insert(current) }
+        // "" reaches the virtual source's listeners even with no direct
+        // destination connected.
+        destinationIds.insert(destinationResolver?() ?? "")
         for destinationId in destinationIds {
             for ch: UInt8 in 0..<16 {
                 _ = sender?([
@@ -332,7 +373,9 @@ final class MidiOut: VoiceSink {
     }
 
     func configureCurrentDestination() {
-        guard let destinationId = destinationResolver?() else { return }
+        // "" = no direct destination; the MPE zone + bend-range RPNs still go
+        // out on the virtual source for whoever is listening there.
+        let destinationId = destinationResolver?() ?? ""
         let range = clamp(store.state.midi.bendRange, 1, 96)
         guard configuredDestinations[destinationId] != range else { return }
 

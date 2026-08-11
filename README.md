@@ -78,9 +78,13 @@ cd ios/Core
   like the original.
 - **FX**: reverb (generated impulse), delay, distortion, fatten (detuned
   unison) — the original's four inserts, shared by synth and sampler.
-- **MIDI**: MPE-style output (per-touch channel, per-note pitch bend,
-  channel pressure, CC74 timbre), configurable bend range, MIDI input to
-  play the internal synth.
+- **MIDI**: a controller first — MPE-style output (per-touch channel,
+  per-note pitch bend, channel pressure, CC74 timbre) with configurable
+  bend range drives any MPE-aware synth or DAW. To reach a DAW on the same
+  machine, route through a virtual port: an IAC bus (macOS, Audio MIDI
+  Setup) or loopMIDI (Windows). The native app also publishes an
+  "expressionPad" CoreMIDI virtual source, so iOS synths just select it as
+  an input. MIDI input plays the internal synth (notes only, by design).
 - **Collapsible controls**: tab bar (SYNTH | SMPLR | FX | PAD | MIDI) with a chevron
   to collapse everything and play full-screen. Tap the active tab to toggle.
 - **URL config**: share setups, e.g. `?layout=hex&scheme=Rainbow&rows=6&cols=14`.
