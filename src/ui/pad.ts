@@ -8,14 +8,20 @@ import { rowOffsets, SCALES } from '../core/scales'
 import { noteName } from '../core/notes'
 import type { Store } from '../core/state'
 import { TouchTracker, touchesToPad } from './touch'
-import { keyColors, parseHsl } from './colors'
+import { keyColors, keyMaterial, parseHsl, type KeyMaterial } from './colors'
 import { BrightnessField } from './field'
 import type { VoiceSink } from '../audio/sink'
 
 /** Pad paths whose change alters key geometry and forces a layout rebuild. */
 const GEOMETRY_PATHS = new Set([
-  'pad.layout', 'pad.rows', 'pad.cols', 'pad.rowTuning', 'pad.colScale',
-  'pad.baseNote', 'pad.mirror', 'pad.mirrorOffset',
+  'pad.layout',
+  'pad.rows',
+  'pad.cols',
+  'pad.rowTuning',
+  'pad.colScale',
+  'pad.baseNote',
+  'pad.mirror',
+  'pad.mirrorOffset',
 ])
 
 export class PadView {
@@ -25,13 +31,22 @@ export class PadView {
   private layout: Layout
   private field: BrightnessField
   private accessibleKeys: HTMLDivElement
-  private accessibilityNoteId = 2_000_000
+  private accessibilityNoteId = 3_000_000
+  private reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
   private lastFrame = performance.now()
   private lastHaptic = 0
   private raf = 0
   private dpr = 1
+  private bounds: { left: number; top: number } | null = null
+  private inputOffsets = new Map<number, { x: number; y: number }>()
 
-  constructor(private store: Store, sink: VoiceSink, private container: HTMLElement) {
+  constructor(
+    private store: Store,
+    sink: VoiceSink,
+    private container: HTMLElement,
+  ) {
+    container.tabIndex = -1
+    container.setAttribute('aria-label', 'Playing surface')
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'pad-canvas'
     this.canvas.style.touchAction = 'none'
@@ -49,20 +64,34 @@ export class PadView {
       getLayout: () => this.layout,
       getPad: () => store.state.pad,
       sink,
-      onChange: () => this.requestRender(),
+      onChange: () => {
+        for (const id of this.inputOffsets.keys()) {
+          if (!this.tracker.active.has(id)) this.inputOffsets.delete(id)
+        }
+        this.requestRender()
+      },
       // Every note onset drops a "pebble" whose wave spreads across the
       // lattice — at event time, so even sub-frame taps make a splash.
       onTrigger: (key) => {
-        if (store.state.appearance.ripples) this.field.poke(key.id, 1.3)
+        if (store.state.appearance.ripples && !this.reducedMotion.matches)
+          this.field.poke(key.id, 1.3)
       },
       onFret: () => this.hapticTick(),
     })
     this.bindPointer()
+    this.reducedMotion.addEventListener('change', () => {
+      this.field = new BrightnessField(this.layout.keys)
+      this.requestRender()
+    })
+    void document.fonts.ready.then(() => this.requestRender())
     store.subscribe((_s, path) => {
       if (path.startsWith('pad') || path.startsWith('appearance')) {
         // Only geometry changes rebuild (and thus cancel held touches);
         // performance knobs like slide/vib/haptic just repaint.
         if (GEOMETRY_PATHS.has(path) || path === 'pad') this.rebuild()
+        if (!store.state.appearance.ripples) {
+          this.field = new BrightnessField(this.layout.keys)
+        }
         this.requestRender()
       }
     })
@@ -106,6 +135,7 @@ export class PadView {
 
   rebuild(): void {
     this.tracker.cancelAll()
+    this.inputOffsets.clear()
     this.layout = this.computeLayout(
       this.canvas.width / this.dpr,
       this.canvas.height / this.dpr,
@@ -126,7 +156,10 @@ export class PadView {
       )
       button.addEventListener('click', () => {
         const id = this.accessibilityNoteId++
-        this.tracker.down(id, key.cx, key.cy)
+        const current = this.layout.keys.find(
+          (candidate) => candidate.id === key.id,
+        )!
+        this.tracker.down(id, current.cx, current.cy)
         window.setTimeout(() => this.tracker.up(id), 160)
       })
       this.accessibleKeys.appendChild(button)
@@ -136,13 +169,51 @@ export class PadView {
   resize(): void {
     const rect = this.container.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return
+    // Measure the content box: the enclosure border is outside the play area.
+    const width = this.container.clientWidth
+    const height = this.container.clientHeight
+    if (width < 1 || height < 1) return
     this.dpr = Math.min(2.5, window.devicePixelRatio || 1)
-    this.canvas.width = Math.round(rect.width * this.dpr)
-    this.canvas.height = Math.round(rect.height * this.dpr)
-    this.canvas.style.width = `${rect.width}px`
-    this.canvas.style.height = `${rect.height}px`
-    this.rebuild()
+    this.canvas.width = Math.round(width * this.dpr)
+    this.canvas.height = Math.round(height * this.dpr)
+    this.canvas.style.width = `${width}px`
+    this.canvas.style.height = `${height}px`
+    const previous = this.layout
+    const before = new Map(
+      [...this.tracker.active].map(([id, t]) => [id, { x: t.x, y: t.y }]),
+    )
+    this.layout = this.computeLayout(width, height)
+    this.tracker.reflow(previous)
+    const nextBounds = this.canvas.getBoundingClientRect()
+    for (const [id, touch] of this.tracker.active) {
+      const old = before.get(id)!
+      const offset = this.inputOffsets.get(id) ?? { x: 0, y: 0 }
+      // Keep a stationary finger at the same musical position when controls
+      // move the canvas. Future motion remains relative to that held note.
+      this.inputOffsets.set(id, {
+        x:
+          touch.x -
+          (old.x -
+            offset.x +
+            (this.bounds?.left ?? nextBounds.left) -
+            nextBounds.left),
+        y:
+          touch.y -
+          (old.y -
+            offset.y +
+            (this.bounds?.top ?? nextBounds.top) -
+            nextBounds.top),
+      })
+    }
+    this.bounds = { left: nextBounds.left, top: nextBounds.top }
+    this.field = new BrightnessField(this.layout.keys)
+    if (!this.accessibleKeys.childElementCount) this.rebuildAccessibility()
     this.requestRender()
+  }
+
+  private position(id: number, x: number, y: number): [number, number] {
+    const offset = this.inputOffsets.get(id)
+    return [x + (offset?.x ?? 0), y + (offset?.y ?? 0)]
   }
 
   private bindPointer(): void {
@@ -152,11 +223,13 @@ export class PadView {
     // events here serve mouse and pen only.
     const pos = (e: PointerEvent): [number, number] => {
       const r = this.canvas.getBoundingClientRect()
-      return [e.clientX - r.left, e.clientY - r.top]
+      return this.position(e.pointerId, e.clientX - r.left, e.clientY - r.top)
     }
     this.canvas.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch') return
       e.preventDefault()
+      this.container.focus({ preventScroll: true })
+      this.inputOffsets.delete(e.pointerId)
       this.canvas.setPointerCapture(e.pointerId)
       const [x, y] = pos(e)
       this.tracker.down(e.pointerId, x, y)
@@ -184,6 +257,7 @@ export class PadView {
       (e) => {
         e.preventDefault()
         for (const t of touchesToPad(e.changedTouches, rect())) {
+          this.inputOffsets.delete(t.id)
           this.tracker.down(t.id, t.x, t.y)
         }
       },
@@ -194,7 +268,7 @@ export class PadView {
       (e) => {
         e.preventDefault()
         for (const t of touchesToPad(e.changedTouches, rect())) {
-          this.tracker.move(t.id, t.x, t.y)
+          this.tracker.move(t.id, ...this.position(t.id, t.x, t.y))
         }
       },
       { passive: false },
@@ -215,7 +289,8 @@ export class PadView {
       this.raf = 0
       this.render()
       // Keep animating while touches are live or the field is still moving.
-      if (this.tracker.active.size > 0 || this.field.energy > 0.002) this.requestRender()
+      if (this.tracker.active.size > 0 || this.field.energy > 0.002)
+        this.requestRender()
     })
   }
 
@@ -225,13 +300,16 @@ export class PadView {
     const { width, height } = this.layout.params
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
-    ctx.fillStyle = '#06080c'
+    ctx.fillStyle = '#292e26'
     ctx.fillRect(0, 0, width, height)
 
     const app = this.store.state.appearance
     const activeKeyIds = new Map<number, number>() // key id → pressure
     for (const t of this.tracker.active.values()) {
-      activeKeyIds.set(t.key.id, Math.max(activeKeyIds.get(t.key.id) ?? 0, t.pressure))
+      activeKeyIds.set(
+        t.key.id,
+        Math.max(activeKeyIds.get(t.key.id) ?? 0, t.pressure),
+      )
     }
 
     // Advance the brightness field by wall-clock time (pokes happen at
@@ -267,30 +345,41 @@ export class PadView {
           fill = `hsl(${hsl.h}, ${hsl.s}%, ${l}%)`
         }
       }
-      this.drawKey(ctx, key, fill, colors.stroke, active, activeKeyIds.get(key.id) ?? 0)
+      const pressure = activeKeyIds.get(key.id) ?? 0
+      const material = keyMaterial(
+        active ? `hsl(29, 70%, ${77 + pressure * 8}%)` : fill,
+      )
+      this.drawKey(ctx, key, material, colors.stroke, active)
       if (app.labels && (key.kind !== 'black' || key.char)) {
-        ctx.fillStyle = active ? '#10141c' : colors.label
-        ctx.font = `${Math.max(9, Math.min(16, key.w * 0.22))}px 'Avenir Next Condensed', 'Arial Narrow', sans-serif`
+        ctx.fillStyle = material.label
+        ctx.font = `${Math.max(9, Math.min(16, key.w * 0.22))}px 'IBM Plex Sans', sans-serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        const labelY = key.kind === 'white' && !key.char ? key.y + key.h * 0.78 : key.cy
-        ctx.fillText(noteName(key.note), key.cx, labelY)
+        const labelY =
+          key.kind === 'white' && !key.char ? key.y + key.h * 0.78 : key.cy
+        const isRoot = (key.note - this.store.state.pad.baseNote) % 12 === 0
+        const pressOffset = active ? Math.min(3, key.h * 0.07) * 0.75 : 0
+        ctx.fillText(noteName(key.note, isRoot), key.cx, labelY + pressOffset)
       }
       if (app.labels && key.char) {
         ctx.save()
-        ctx.globalAlpha = 0.55
-        ctx.fillStyle = active ? '#10141c' : colors.label
-        ctx.font = `${Math.max(8, key.w * 0.16)}px 'Avenir Next Condensed', 'Arial Narrow', sans-serif`
+        ctx.globalAlpha = 1
+        ctx.fillStyle = material.label
+        ctx.font = `${Math.max(8, key.w * 0.16)}px 'IBM Plex Sans', sans-serif`
         ctx.textAlign = 'left'
         ctx.textBaseline = 'top'
-        ctx.fillText(key.char, key.x + key.w * 0.12, key.y + key.h * 0.1)
+        ctx.fillText(
+          key.char,
+          key.x + key.w * 0.12,
+          key.y + key.h * 0.1 + (active ? Math.min(3, key.h * 0.07) * 0.75 : 0),
+        )
         ctx.restore()
       }
     }
 
     // Mark the mirror seam so each thumb knows its half.
     if (this.layout.mirrored) {
-      ctx.strokeStyle = 'rgba(126, 214, 255, 0.22)'
+      ctx.strokeStyle = 'rgba(233, 116, 65, 0.65)'
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(width / 2, 0)
@@ -302,42 +391,77 @@ export class PadView {
   private drawKey(
     ctx: CanvasRenderingContext2D,
     key: KeyShape,
-    fill: string,
+    face: KeyMaterial,
     stroke: string,
     active: boolean,
-    pressure: number,
   ): void {
     ctx.save()
-    if (active) {
-      ctx.shadowColor = 'rgba(255,255,255,0.95)'
-      ctx.shadowBlur = 18 + pressure * 22
+    const gap = Math.min(3.5, key.w * 0.045, key.h * 0.06)
+    const depth = Math.min(3, key.h * 0.07)
+    const pressed = active ? depth * 0.75 : 0
+    const path = (inset: number, offset: number) => {
+      ctx.beginPath()
+      if (key.poly) {
+        const scale = Math.max(0.1, 1 - (inset * 2) / Math.min(key.w, key.h))
+        key.poly.forEach(([x, y], i) => {
+          const px = key.cx + (x - key.cx) * scale
+          const py = key.cy + (y - key.cy) * scale + offset
+          if (i === 0) ctx.moveTo(px, py)
+          else ctx.lineTo(px, py)
+        })
+        ctx.closePath()
+      } else {
+        const baseInset = key.inset ?? 0
+        const i = Math.max(baseInset, inset)
+        const w = Math.max(0.1, key.w - i * 2)
+        const h = Math.max(0.1, key.h - i * 2 - depth)
+        roundRect(
+          ctx,
+          key.x + i,
+          key.y + i + offset,
+          w,
+          h,
+          Math.min(6, w * 0.08, h * 0.15),
+        )
+      }
     }
-    ctx.fillStyle = active ? `hsl(0, 0%, ${86 + pressure * 12}%)` : fill
-    ctx.strokeStyle = active ? '#ffffff' : stroke
-    ctx.lineWidth = active ? 2 : 1
-    ctx.beginPath()
-    if (key.poly) {
-      ctx.moveTo(key.poly[0][0], key.poly[0][1])
-      for (const [px, py] of key.poly.slice(1)) ctx.lineTo(px, py)
-      ctx.closePath()
-      // Inset hexes slightly for a grout line.
-      ctx.fill()
-      ctx.stroke()
-    } else {
-      const inset = key.inset ?? (key.kind === 'black' ? 1 : 1.5)
-      const r = Math.min(6, key.w * 0.08)
-      roundRect(ctx, key.x + inset, key.y + inset, key.w - inset * 2, key.h - inset * 2, r)
-      ctx.fill()
-      ctx.stroke()
-    }
+    // A dark skirt and bevel give every layout the same molded key construction.
+    path(gap, depth)
+    ctx.fillStyle = stroke
+    ctx.fill()
+    const material = ctx.createLinearGradient(
+      key.x,
+      key.y,
+      key.x + key.w * 0.3,
+      key.y + key.h,
+    )
+    material.addColorStop(0, face.top)
+    material.addColorStop(1, face.bottom)
+    path(gap, pressed)
+    ctx.fillStyle = material
+    ctx.fill()
+    ctx.strokeStyle = active ? '#f8c497' : stroke
+    ctx.lineWidth = 0.7
+    ctx.stroke()
+    // Fine directional highlights stay inside the face rather than glowing outside it.
+    ctx.save()
+    ctx.clip()
+    path(gap + 0.7, pressed + 0.8)
+    ctx.strokeStyle = 'rgba(255, 251, 231, 0.18)'
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.restore()
     ctx.restore()
   }
-
 }
 
 function roundRect(
   ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
 ): void {
   ctx.moveTo(x + r, y)
   ctx.arcTo(x + w, y, x + w, y + h, r)

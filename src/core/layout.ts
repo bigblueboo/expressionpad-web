@@ -145,16 +145,13 @@ function hexPoly(cx: number, cy: number, rx: number, ry: number): Array<[number,
 
 function buildHex(p: LayoutParams): Layout {
   // Pointy-top hexes; odd rows shift right by half a hex width. Start from
-  // the largest regular hex that fits, then stretch (capped) to fill the
-  // surface like the original app did.
+  // the largest regular hex that fits. One scale preserves the physical
+  // key shape across viewports; extra tray space is intentional.
   const rByWidth = p.width / (Math.sqrt(3) * (p.cols + 0.5))
   const rByHeight = p.height / (1.5 * p.rows + 0.5)
   const r = Math.min(rByWidth, rByHeight)
-  const MAX_STRETCH = 1.6
-  const sx = Math.min(MAX_STRETCH, rByWidth / r)
-  const sy = Math.min(MAX_STRETCH, rByHeight / r)
-  const hexW = Math.sqrt(3) * r * sx
-  const ry = r * sy
+  const hexW = Math.sqrt(3) * r
+  const ry = r
   const gridW = hexW * (p.cols + 0.5)
   const gridH = ry * (1.5 * p.rows + 0.5)
   const ox = (p.width - gridW) / 2
@@ -176,19 +173,22 @@ function buildHex(p: LayoutParams): Layout {
   return {
     params: p, keys, rowHeight: 1.5 * ry,
     hitTest(x, y) {
-      // Nearest center in the unstretched lattice space is the exact
-      // Voronoi cell of a hex grid, so measure distances un-scaled.
+      // Nearest center identifies the regular hex; then reject empty tray
+      // space beyond its polygon at the outside edge of the lattice.
       let best: KeyShape | null = null
       let bestD = Infinity
       for (const k of keys) {
-        const dx = (x - k.cx) / sx
-        const dy = (y - k.cy) / sy
+        const dx = x - k.cx
+        const dy = y - k.cy
         if (Math.abs(dx) > 2 * r || Math.abs(dy) > 2 * r) continue
         const d = dx * dx + dy * dy
         if (d < bestD) { bestD = d; best = k }
       }
-      // Reject touches well outside the grid.
-      if (best && bestD > (2 * r) * (2 * r)) return null
+      if (best) {
+        const dx = Math.abs(x - best.cx)
+        const dy = Math.abs(y - best.cy)
+        if (dx > hexW / 2 + 1e-7 || dy + dx / Math.sqrt(3) > r + 1e-7) return null
+      }
       return best
     },
     pitchAt(x, row) {

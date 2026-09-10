@@ -28,14 +28,21 @@ function labeled(label: string, child: HTMLElement): HTMLElement {
   return wrap
 }
 
-export function knob(store: Store, path: string, label: string, opts: KnobOpts = {}): HTMLElement {
+export function knob(
+  store: Store,
+  path: string,
+  label: string,
+  opts: KnobOpts = {},
+): HTMLElement {
   const min = opts.min ?? 0
   const max = opts.max ?? 1
-  const fmt = opts.fmt ?? ((v: number) => `${Math.round(((v - min) / (max - min)) * 100)}%`)
+  const fmt = opts.fmt ?? ((v: number) => `${Math.round(v * 100)}%`)
   const initial = store.get<number>(path)
 
   const node = el('div', 'knob')
   node.tabIndex = 0
+  node.title =
+    'Drag up or down · Shift for fine control · Double-click to reset'
   node.setAttribute('role', 'slider')
   node.setAttribute('aria-label', label)
   node.setAttribute('aria-valuemin', String(min))
@@ -61,6 +68,7 @@ export function knob(store: Store, path: string, label: string, opts: KnobOpts =
   node.addEventListener('pointerdown', (e) => {
     e.preventDefault()
     e.stopPropagation()
+    node.focus({ preventScroll: true })
     node.setPointerCapture(e.pointerId)
     dragStart = { y: e.clientY, v: store.get<number>(path) }
   })
@@ -73,10 +81,14 @@ export function knob(store: Store, path: string, label: string, opts: KnobOpts =
   const endDrag = () => (dragStart = null)
   node.addEventListener('pointerup', endDrag)
   node.addEventListener('pointercancel', endDrag)
+  node.addEventListener('lostpointercapture', endDrag)
   node.addEventListener('dblclick', () => store.set(path, initial))
   node.addEventListener('keydown', (e) => {
-    const step = (max - min) / 20
-    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+    const step = (max - min) / (e.shiftKey ? 200 : 20)
+    if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      store.set(path, e.key === 'Home' ? min : max)
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
       e.preventDefault()
       store.set(path, clamp(store.get<number>(path) + step, min, max))
     } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
@@ -98,7 +110,9 @@ export function toggle(store: Store, path: string, label: string): HTMLElement {
     btn.setAttribute('aria-pressed', String(on))
   }
   sync()
-  btn.addEventListener('click', () => store.set(path, !store.get<boolean>(path)))
+  btn.addEventListener('click', () =>
+    store.set(path, !store.get<boolean>(path)),
+  )
   store.subscribe((_s, p) => {
     if (p === path) sync()
   })
@@ -113,7 +127,9 @@ export function select(
 ): HTMLElement {
   const sel = el('select', 'select')
   sel.setAttribute('aria-label', label)
-  const opts = options.map((o) => (typeof o === 'string' ? { value: o, text: o } : o))
+  const opts = options.map((o) =>
+    typeof o === 'string' ? { value: o, text: o } : o,
+  )
   for (const o of opts) {
     const opt = document.createElement('option')
     opt.value = o.value
@@ -123,9 +139,9 @@ export function select(
   sel.value = store.get<string>(path)
   sel.addEventListener('change', () => {
     store.set(path, sel.value)
-    // Drop focus so the typing keyboard goes back to playing notes —
-    // a focused select would otherwise swallow keydowns.
-    sel.blur()
+  })
+  sel.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') sel.blur()
   })
   store.subscribe((_s, p) => {
     if (p === path) sel.value = store.get<string>(path)
@@ -137,7 +153,12 @@ export function stepper(
   store: Store,
   path: string,
   label: string,
-  opts: { min: number; max: number; step?: number; fmt?: (v: number) => string },
+  opts: {
+    min: number
+    max: number
+    step?: number
+    fmt?: (v: number) => string
+  },
 ): HTMLElement {
   const step = opts.step ?? 1
   const fmt = opts.fmt ?? ((v: number) => String(v))
@@ -151,7 +172,15 @@ export function stepper(
   upBtn.type = 'button'
   upBtn.textContent = '+'
   upBtn.setAttribute('aria-label', `increase ${label}`)
-  const sync = () => (value.textContent = fmt(store.get<number>(path)))
+  value.setAttribute('role', 'status')
+  value.setAttribute('aria-live', 'polite')
+  value.setAttribute('aria-label', label)
+  const sync = () => {
+    const v = store.get<number>(path)
+    value.textContent = fmt(v)
+    down.disabled = v <= opts.min
+    upBtn.disabled = v >= opts.max
+  }
   sync()
   const bump = (dir: number) => {
     const v = clamp(store.get<number>(path) + dir * step, opts.min, opts.max)
@@ -172,15 +201,40 @@ export function button(label: string, onClick: () => void): HTMLElement {
   btn.textContent = label
   btn.setAttribute('aria-label', label)
   btn.addEventListener('click', onClick)
-  return labeled(label, btn)
+  const wrap = el('div', 'widget action-widget')
+  wrap.appendChild(btn)
+  return wrap
 }
 
 /** A titled group box, like the original's PADMATRIX / REVERB frames. */
 export function group(title: string, ...children: HTMLElement[]): HTMLElement {
   const g = el('div', 'group')
+  g.dataset.group = title.toLowerCase().replaceAll(' ', '-')
+  g.setAttribute('role', 'group')
+  g.setAttribute('aria-label', title)
   const t = el('span', 'group-title', g)
   t.textContent = title
   const body = el('div', 'group-body', g)
-  for (const c of children) body.appendChild(c)
+  const context = title
+    .split(' ')
+    .map((word) =>
+      word.length <= 3 ? word : word[0] + word.slice(1).toLowerCase(),
+    )
+    .join(' ')
+  const names: Record<string, string> = {
+    bright: 'brightness',
+    tune: 'tuning',
+    res: 'resonance',
+    fdbk: 'feedback',
+    amt: 'amount',
+    wave: 'waveform',
+  }
+  for (const c of children) {
+    for (const slider of c.querySelectorAll('[role="slider"]')) {
+      const label = slider.getAttribute('aria-label')!
+      slider.setAttribute('aria-label', `${context} ${names[label] ?? label}`)
+    }
+    body.appendChild(c)
+  }
   return g
 }

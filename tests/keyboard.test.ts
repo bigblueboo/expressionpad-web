@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { buildLayout, KBD_ROWS, type Layout, type LayoutParams } from '../src/core/layout'
+import {
+  buildLayout,
+  KBD_ROWS,
+  type Layout,
+  type LayoutParams,
+} from '../src/core/layout'
 import { SCALES } from '../src/core/scales'
 import { KeyboardInput } from '../src/ui/keyboard'
 import { TouchTracker } from '../src/ui/touch'
@@ -7,8 +12,14 @@ import type { PadConfig } from '../src/core/state'
 import type { VoiceSink } from '../src/audio/sink'
 
 const base: LayoutParams = {
-  kind: 'kbd-chromatic', rows: 4, cols: 12, width: 1250, height: 400,
-  baseNote: 48, rowOffsets: [0, 5, 10, 15], scale: SCALES.Chromatic,
+  kind: 'kbd-chromatic',
+  rows: 4,
+  cols: 12,
+  width: 1250,
+  height: 400,
+  baseNote: 48,
+  rowOffsets: [0, 5, 10, 15],
+  scale: SCALES.Chromatic,
 }
 
 function keyByCode(layout: Layout, code: string) {
@@ -62,7 +73,11 @@ describe('kbd-chromatic layout', () => {
 })
 
 describe('kbd-piano layout', () => {
-  const layout = buildLayout({ ...base, kind: 'kbd-piano', rowOffsets: [0, 12] })
+  const layout = buildLayout({
+    ...base,
+    kind: 'kbd-piano',
+    rowOffsets: [0, 12],
+  })
 
   it('z x c are C D E and s d are C# Eb', () => {
     expect(keyByCode(layout, 'KeyZ').note).toBe(48) // C3
@@ -100,10 +115,14 @@ describe('KeyboardInput', () => {
   class SpySink implements VoiceSink {
     ons: number[] = []
     offs = 0
-    noteOn(_id: number, pitch: number) { this.ons.push(pitch) }
+    noteOn(_id: number, pitch: number) {
+      this.ons.push(pitch)
+    }
     glide() {}
     pressure() {}
-    noteOff() { this.offs++ }
+    noteOff() {
+      this.offs++
+    }
     allOff() {}
   }
 
@@ -113,16 +132,30 @@ describe('KeyboardInput', () => {
   let tracker: TouchTracker
 
   const pad: PadConfig = {
-    layout: 'kbd-chromatic', rows: 4, cols: 12, rowTuning: 'Fourths [+5]',
-    colScale: 'Chromatic', baseNote: 48, slide: 0, frets: false,
-    touchVel: false, aftertouch: false,
-    mirror: false, mirrorOffset: 0, vibrato: 0, haptics: 0,
+    layout: 'kbd-chromatic',
+    rows: 4,
+    cols: 12,
+    rowTuning: 'Fourths [+5]',
+    colScale: 'Chromatic',
+    baseNote: 48,
+    slide: 0,
+    frets: false,
+    touchVel: false,
+    aftertouch: false,
+    mirror: false,
+    mirrorOffset: 0,
+    vibrato: 0,
+    haptics: 0,
   }
 
   beforeEach(() => {
     layout = buildLayout(base)
     sink = new SpySink()
-    tracker = new TouchTracker({ getLayout: () => layout, getPad: () => pad, sink })
+    tracker = new TouchTracker({
+      getLayout: () => layout,
+      getPad: () => pad,
+      sink,
+    })
     kb = new KeyboardInput(() => layout, tracker)
   })
 
@@ -176,6 +209,19 @@ describe('KeyboardInput', () => {
     kb.releaseAll()
     expect(tracker.active.size).toBe(0)
     expect(kb.active.size).toBe(0)
+  })
+
+  it('does not play notes while operating buttons or custom sliders', () => {
+    for (const node of [
+      document.createElement('button'),
+      document.createElement('div'),
+    ]) {
+      if (node.tagName === 'DIV') node.setAttribute('role', 'slider')
+      const e = new KeyboardEvent('keydown', { code: 'KeyZ' })
+      Object.defineProperty(e, 'target', { value: node })
+      kb.onKeyDown(e)
+    }
+    expect(sink.ons).toEqual([])
   })
 
   it('does not steal keys from form fields', () => {

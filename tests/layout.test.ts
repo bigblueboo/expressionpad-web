@@ -100,18 +100,24 @@ describe('hex layout', () => {
     }
   })
 
-  it('stretches to fill most of a mismatched aspect ratio (like the original)', () => {
-    const wide = buildLayout({ ...base, kind: 'hex', rows: 6, cols: 14, width: 1024, height: 700 })
-    const minY = Math.min(...wide.keys.map((k) => k.y))
-    const maxY = Math.max(...wide.keys.map((k) => k.y + k.h))
-    expect(maxY - minY).toBeGreaterThan(700 * 0.8)
+  it('fits regular hexagons uniformly across portrait and landscape', () => {
+    for (const [width, height] of [[1024, 700], [500, 200], [320, 500]]) {
+      const layout = buildLayout({ ...base, kind: 'hex', rows: 6, cols: 14, width, height })
+      for (const key of layout.keys) {
+        expect(key.w / key.h).toBeCloseTo(Math.sqrt(3) / 2, 8)
+        const points = key.poly!
+        const lengths = points.map(([x, y], i) => Math.hypot(x - points[(i + 1) % 6][0], y - points[(i + 1) % 6][1]))
+        for (const length of lengths) expect(length).toBeCloseTo(lengths[0], 8)
+      }
+      expect(layout.hitTest(0, 0)).toBeNull()
+    }
   })
 
-  it('keeps hit-testing exact under stretch', () => {
+  it('keeps hit-testing exact across the fitted polygons', () => {
     const wide = buildLayout({ ...base, kind: 'hex', rows: 6, cols: 14, width: 1024, height: 700 })
     for (const k of wide.keys) {
       expect(wide.hitTest(k.cx, k.cy)?.id).toBe(k.id)
-      // Just inside the top and bottom corners of the stretched hex.
+      // Just inside the top and bottom corners of the fitted hex.
       expect(wide.hitTest(k.cx, k.y + k.h * 0.06)?.id).toBe(k.id)
       expect(wide.hitTest(k.cx, k.y + k.h * 0.94)?.id).toBe(k.id)
     }

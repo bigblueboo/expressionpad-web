@@ -71,6 +71,17 @@ describe('Store', () => {
     expect(loaded.state.pad.cols).toBe(16)
   })
 
+  it('uses Studio for new setups and preserves each saved palette', () => {
+    expect(Store.load('new-design').state.appearance.scheme).toBe('Studio')
+    for (const scheme of ['Studio', 'Ocean', 'Magenta', 'Rainbow', 'Mono']) {
+      localStorage.setItem('saved-design', JSON.stringify({ appearance: { scheme } }))
+      const store = Store.load('saved-design')
+      expect(store.state.appearance.scheme).toBe(scheme)
+      store.flushSave()
+      expect(Store.load('saved-design').state.appearance.scheme).toBe(scheme)
+    }
+  })
+
   it('survives corrupted persisted state', () => {
     localStorage.setItem('bad-key', '{not json')
     const loaded = Store.load('bad-key')

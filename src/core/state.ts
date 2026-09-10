@@ -157,7 +157,7 @@ export function defaultState(): AppState {
       inEnabled: false, inputId: '', localSound: true,
     },
     appearance: {
-      scheme: 'Ocean', labels: true, brightness: 0.65,
+      scheme: 'Studio', labels: true, brightness: 0.65,
       ripples: true, rippleAmount: 0.5, contrast: 0.5,
     },
     ui: { panelOpen: true, tab: 'pad' },
@@ -280,7 +280,7 @@ const SYNTH_PRESETS = new Set([
 const SAMPLE_PRESETS = new Set([
   'English Horn', 'Choir', 'Strings', 'E-Piano', 'Marimba', 'Pluck', 'User Sample',
 ])
-const SCHEMES = new Set(['Ocean', 'Magenta', 'Rainbow', 'Mono'])
+const SCHEMES = new Set(['Studio', 'Ocean', 'Magenta', 'Rainbow', 'Mono'])
 
 function finite(value: number, fallback: number, min: number, max: number): number {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback

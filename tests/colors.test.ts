@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { contrastRatio, keyColors, parseHsl, SCHEME_NAMES } from '../src/ui/colors'
+import {
+  contrastRatio,
+  keyColors,
+  keyMaterial,
+  labelColor,
+  parseHsl,
+  SCHEME_NAMES,
+} from '../src/ui/colors'
 import type { KeyShape } from '../src/core/layout'
 
 function key(note: number, kind: KeyShape['kind'] = 'rect'): KeyShape {
-  return { id: note, note, row: 0, col: 0, kind, x: 0, y: 0, w: 50, h: 50, cx: 25, cy: 25 }
+  return {
+    id: note,
+    note,
+    row: 0,
+    col: 0,
+    kind,
+    x: 0,
+    y: 0,
+    w: 50,
+    h: 50,
+    cx: 25,
+    cy: 25,
+  }
 }
 
 const opts = { brightness: 0.65, contrast: 0.5, baseNote: 48 }
@@ -56,9 +75,13 @@ describe('key colors', () => {
     const high = { ...opts, contrast: 0.9 }
     for (const scheme of SCHEME_NAMES) {
       const whiteLow = parseHsl(keyColors(scheme, key(60, 'white'), low).fill)!
-      const whiteHigh = parseHsl(keyColors(scheme, key(60, 'white'), high).fill)!
+      const whiteHigh = parseHsl(
+        keyColors(scheme, key(60, 'white'), high).fill,
+      )!
       const blackLow = parseHsl(keyColors(scheme, key(61, 'black'), low).fill)!
-      const blackHigh = parseHsl(keyColors(scheme, key(61, 'black'), high).fill)!
+      const blackHigh = parseHsl(
+        keyColors(scheme, key(61, 'black'), high).fill,
+      )!
       expect(whiteHigh.l, scheme).toBeGreaterThan(whiteLow.l)
       expect(blackHigh.l, scheme).toBeLessThan(blackLow.l)
     }
@@ -69,8 +92,12 @@ describe('key colors', () => {
   })
 
   it('brightness scales lightness', () => {
-    const dim = parseHsl(keyColors('Ocean', key(50), { ...opts, brightness: 0.1 }).fill)!
-    const bright = parseHsl(keyColors('Ocean', key(50), { ...opts, brightness: 1 }).fill)!
+    const dim = parseHsl(
+      keyColors('Ocean', key(50), { ...opts, brightness: 0.1 }).fill,
+    )!
+    const bright = parseHsl(
+      keyColors('Ocean', key(50), { ...opts, brightness: 1 }).fill,
+    )!
     expect(bright.l).toBeGreaterThan(dim.l)
   })
 
@@ -78,7 +105,9 @@ describe('key colors', () => {
     for (const scheme of SCHEME_NAMES) {
       for (const kind of ['rect', 'hex'] as const) {
         // C# (49) vs its natural neighbors C (48) and D (50).
-        const accidental = parseHsl(keyColors(scheme, key(49, kind), opts).fill)!
+        const accidental = parseHsl(
+          keyColors(scheme, key(49, kind), opts).fill,
+        )!
         const naturalC = parseHsl(keyColors(scheme, key(48, kind), opts).fill)!
         const naturalD = parseHsl(keyColors(scheme, key(50, kind), opts).fill)!
         expect(accidental.l, `${scheme} ${kind}`).toBeLessThan(naturalC.l)
@@ -90,6 +119,24 @@ describe('key colors', () => {
   it('accidental darkening leaves piano whites and blacks alone', () => {
     const white = parseHsl(keyColors('Ocean', key(61, 'white'), opts).fill)!
     expect(white.l).toBeGreaterThan(55) // C# as a white kind stays bright
+  })
+
+  it('keeps labels readable as a ripple brightens or dims a key', () => {
+    for (const h of [0, 16, 48, 120, 210, 320]) {
+      for (let l = 4; l <= 94; l += 5) {
+        const fill = `hsl(${h}, 62%, ${l}%)`
+        expect(contrastRatio(labelColor(fill), fill)).toBeGreaterThanOrEqual(
+          4.5,
+        )
+        const material = keyMaterial(fill)
+        expect(
+          contrastRatio(material.label, material.top),
+        ).toBeGreaterThanOrEqual(4.5)
+        expect(
+          contrastRatio(material.label, material.bottom),
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+    }
   })
 
   it('octaves share a color (pitch-class based)', () => {

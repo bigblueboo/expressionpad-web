@@ -1,6 +1,6 @@
 /**
- * Control panel: top tab bar (SYNTH | FX | PAD | MIDI) with a collapse
- * chevron, and a sliding panel of grouped controls — the original layout.
+ * Instrument header, persistent source selection, and collapsible control
+ * banks. Each page shares widgets and declares stable group identifiers.
  */
 import type { Store } from '../core/state'
 import { PRESET_NAMES, presetPatch } from '../core/presets'
@@ -30,14 +30,60 @@ export function buildControls(
   router: VoiceSink,
   root: HTMLElement,
 ): void {
-  const bar = document.createElement('header')
+  const header = document.createElement('header')
+  header.className = 'instrument-header'
+  header.innerHTML = `
+    <div class="identity">
+      <span class="brand">expressionPad</span>
+      <div class="model-line">EP–02 &nbsp; / &nbsp; continuous touch instrument</div>
+    </div>
+    <div class="instrument-display" aria-label="Current instrument setup">
+      <div class="display-cell"><span class="display-label">ROOT</span><span class="display-value display-root"></span></div>
+      <div class="display-cell display-source"><span class="display-label">VOICE</span></div>
+      <div class="display-cell"><span class="display-label display-voice"></span><span class="display-value display-preset"></span></div>
+      <div class="display-cell display-scale"><span class="display-label">SCALE</span><span class="display-value display-scale-value"></span></div>
+    </div>`
+  const voice = select(store, 'voice', 'Sound source', [
+    { value: 'synth', text: 'Synth' },
+    { value: 'sampler', text: 'Sampler' },
+  ]).querySelector('select')!
+  header.querySelector('.display-source')!.appendChild(voice)
+  const panic = button('panic', () => router.allOff())
+  panic.classList.add('header-panic')
+  panic.title = 'Silence all voices and effects'
+  header.appendChild(panic)
+  root.appendChild(header)
+  const syncDisplay = () => {
+    const s = store.state
+    header.querySelector('.display-root')!.textContent = noteName(
+      s.pad.baseNote,
+      true,
+    )
+    header.querySelector('.display-voice')!.textContent = s.midi.localSound
+      ? 'SOUND'
+      : 'LOCAL SOUND OFF'
+    header.querySelector('.display-preset')!.textContent =
+      s.voice === 'synth' ? s.synth.preset : s.sampler.preset
+    header.querySelector('.display-scale-value')!.textContent = s.pad.colScale
+  }
+  syncDisplay()
+  store.subscribe((_s, path) => {
+    if (
+      [
+        'pad.baseNote',
+        'pad.colScale',
+        'voice',
+        'synth.preset',
+        'sampler.preset',
+        'midi.localSound',
+      ].includes(path)
+    )
+      syncDisplay()
+  })
+
+  const bar = document.createElement('div')
   bar.className = 'topbar'
   root.appendChild(bar)
-
-  const brand = document.createElement('span')
-  brand.className = 'brand'
-  brand.textContent = 'expressionPad'
-  bar.appendChild(brand)
 
   const tabsWrap = document.createElement('nav')
   tabsWrap.className = 'tabs'
@@ -63,14 +109,17 @@ export function buildControls(
       }
     })
     btn.addEventListener('keydown', (event) => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key))
+        return
       event.preventDefault()
       const index = TABS.findIndex((candidate) => candidate.id === tab.id)
-      const next = event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? TABS.length - 1
-          : (index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? TABS.length - 1
+            : (index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) %
+              TABS.length
       tabButtons.get(TABS[next].id)?.focus()
     })
     tabsWrap.appendChild(btn)
@@ -82,8 +131,10 @@ export function buildControls(
   chevron.className = 'chevron'
   chevron.setAttribute('aria-label', 'toggle control panel')
   chevron.setAttribute('aria-controls', 'control-panel')
-  chevron.textContent = '«'
-  chevron.addEventListener('click', () => store.set('ui.panelOpen', !store.state.ui.panelOpen))
+  chevron.textContent = 'HIDE'
+  chevron.addEventListener('click', () =>
+    store.set('ui.panelOpen', !store.state.ui.panelOpen),
+  )
   bar.appendChild(chevron)
 
   const panel = document.createElement('section')
@@ -93,7 +144,7 @@ export function buildControls(
 
   const pages: Record<string, HTMLElement> = {
     synth: synthPage(store),
-    smplr: smplrPage(store, sampler, router),
+    smplr: smplrPage(store, sampler),
     fx: fxPage(store),
     pad: padPage(store),
     midi: midiPage(store, midi, engine),
@@ -107,8 +158,69 @@ export function buildControls(
     panel.appendChild(page)
   }
 
+  const panelNav = document.createElement('div')
+  panelNav.className = 'panel-nav'
+  panelNav.hidden = true
+  const bankSelect = document.createElement('select')
+  bankSelect.className = 'bank-select'
+  bankSelect.setAttribute('aria-label', 'Go to control bank')
+  panelNav.appendChild(bankSelect)
+  let bankTab = ''
+  bankSelect.addEventListener('change', () => {
+    const bank = pages[store.state.ui.tab].querySelector<HTMLElement>(
+      `[data-group="${bankSelect.value}"]`,
+    )!
+    panel.scrollTop +=
+      bank.getBoundingClientRect().top - panel.getBoundingClientRect().top - 14
+  })
+  const more = document.createElement('button')
+  more.type = 'button'
+  more.setAttribute('aria-controls', panel.id)
+  panelNav.appendChild(more)
+  root.appendChild(panelNav)
+  const syncOverflow = () => {
+    const overflow =
+      store.state.ui.panelOpen && panel.scrollHeight > panel.clientHeight + 2
+    panelNav.hidden = !overflow
+    const atEnd = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 3
+    more.textContent = atEnd ? 'Back to top ↑' : 'More controls ↓'
+    const tab = store.state.ui.tab
+    if (bankTab !== tab) {
+      bankTab = tab
+      bankSelect.replaceChildren(
+        ...[...pages[tab].querySelectorAll<HTMLElement>('.group')].map(
+          (group) => {
+            const option = document.createElement('option')
+            option.value = group.dataset.group!
+            option.textContent =
+              group.querySelector('.group-title')!.textContent
+            return option
+          },
+        ),
+      )
+    }
+    const panelTop = panel.getBoundingClientRect().top
+    const banks = [...pages[tab].querySelectorAll<HTMLElement>('.group')]
+    const current = banks.find(
+      (bank) => bank.getBoundingClientRect().bottom > panelTop + 24,
+    )
+    if (current) bankSelect.value = current.dataset.group!
+  }
+  more.addEventListener('click', () => {
+    const atEnd = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 3
+    panel.scrollTo({
+      top: atEnd ? 0 : panel.scrollTop + panel.clientHeight * 0.8,
+    })
+  })
+  panel.addEventListener('scroll', syncOverflow, { passive: true })
+  if (typeof ResizeObserver !== 'undefined')
+    new ResizeObserver(syncOverflow).observe(panel)
+
+  let previousTab = store.state.ui.tab
   const sync = () => {
     const { tab, panelOpen } = store.state.ui
+    if (tab !== previousTab) panel.scrollTop = 0
+    previousTab = tab
     for (const [id, btn] of tabButtons) {
       btn.classList.toggle('active', id === tab && panelOpen)
       btn.setAttribute('aria-selected', String(id === tab))
@@ -122,9 +234,21 @@ export function buildControls(
       page.style.display = inactive ? 'none' : ''
     }
     panel.classList.toggle('collapsed', !panelOpen)
+    panel.inert = !panelOpen
+    if (!panelOpen) panelNav.hidden = true
+    root.classList.toggle('controls-open', panelOpen)
     panel.setAttribute('aria-hidden', String(!panelOpen))
     chevron.classList.toggle('collapsed', !panelOpen)
+    chevron.textContent = panelOpen ? 'HIDE' : 'SHOW'
+    chevron.setAttribute(
+      'aria-label',
+      panelOpen ? 'Hide controls' : 'Show controls',
+    )
+    chevron.title = panelOpen
+      ? 'Hide controls for more playing space'
+      : 'Show instrument controls'
     chevron.setAttribute('aria-expanded', String(panelOpen))
+    requestAnimationFrame(syncOverflow)
   }
   sync()
   store.subscribe((_s, path) => {
@@ -141,20 +265,11 @@ function row(...children: HTMLElement[]): HTMLElement {
 
 const semiFmt = (v: number) => (v > 0 ? `+${v}` : String(v))
 
-/** SYNTH/SMPLR exclusivity switch — only one local sound source at a time. */
-function voiceGroup(store: Store): HTMLElement {
-  return group(
-    'VOICE',
-    select(store, 'voice', 'active', [
-      { value: 'synth', text: 'Synth' },
-      { value: 'sampler', text: 'Sampler' },
-    ]),
-  )
-}
-
-function smplrPage(store: Store, sampler: SamplerEngine, router: VoiceSink): HTMLElement {
+function smplrPage(store: Store, sampler: SamplerEngine): HTMLElement {
   const presetSel = select(
-    store, 'sampler.preset', 'preset',
+    store,
+    'sampler.preset',
+    'preset',
     [...SAMPLE_NAMES, USER_PRESET].map((p) => ({ value: p, text: p })),
   )
 
@@ -188,9 +303,8 @@ function smplrPage(store: Store, sampler: SamplerEngine, router: VoiceSink): HTM
       store.set('sampler.preset', USER_PRESET)
       syncStatus()
     } catch (error) {
-      status.textContent = error instanceof Error
-        ? error.message
-        : `Could not decode ${f.name}.`
+      status.textContent =
+        error instanceof Error ? error.message : `Could not decode ${f.name}.`
     }
   })
 
@@ -198,27 +312,43 @@ function smplrPage(store: Store, sampler: SamplerEngine, router: VoiceSink): HTM
   loadBtn.appendChild(file)
 
   return row(
-    group('SAMPLER', presetSel, loadBtn, toggle(store, 'sampler.retrig', 'retrig'),
-      button('panic', () => router.allOff()), status),
+    group(
+      'SAMPLER',
+      presetSel,
+      loadBtn,
+      toggle(store, 'sampler.retrig', 'retrig'),
+      status,
+    ),
     group(
       'LEVEL',
       knob(store, 'sampler.level', 'level'),
-      knob(store, 'sampler.attack', 'attack', { min: 0.002, max: 0.5, fmt: secFmt }),
-      knob(store, 'sampler.release', 'release', { min: 0.02, max: 3, fmt: secFmt }),
+      knob(store, 'sampler.attack', 'attack', {
+        min: 0.002,
+        max: 0.5,
+        fmt: secFmt,
+      }),
+      knob(store, 'sampler.release', 'release', {
+        min: 0.02,
+        max: 3,
+        fmt: secFmt,
+      }),
     ),
     group(
       'USER ROOT',
       stepper(store, 'sampler.userRoot', 'root', {
-        min: 24, max: 96, fmt: (v) => noteName(v, true),
+        min: 24,
+        max: 96,
+        fmt: (v) => noteName(v, true),
       }),
     ),
-    voiceGroup(store),
   )
 }
 
 function synthPage(store: Store): HTMLElement {
   const presetSel = select(
-    store, 'synth.preset', 'preset',
+    store,
+    'synth.preset',
+    'preset',
     PRESET_NAMES.map((p) => ({ value: p, text: p })),
   )
   // Selecting a preset applies the whole patch.
@@ -227,23 +357,42 @@ function synthPage(store: Store): HTMLElement {
   })
 
   return row(
-    group('PRESET', presetSel, knob(store, 'synth.level', 'level')),
-    voiceGroup(store),
+    group(
+      'SOURCE',
+      presetSel,
+      knob(store, 'synth.level', 'level'),
+      knob(store, 'synth.bright', 'bright'),
+    ),
     group(
       'GENERATOR 1',
       knob(store, 'synth.gen1.morph', 'wave'),
-      stepper(store, 'synth.gen1.semi', 'semi', { min: -24, max: 24, fmt: semiFmt }),
-      knob(store, 'synth.gen1.tune', 'tune', { min: -50, max: 50, fmt: (v) => `${Math.round(v)}¢` }),
+      stepper(store, 'synth.gen1.semi', 'semi', {
+        min: -24,
+        max: 24,
+        fmt: semiFmt,
+      }),
+      knob(store, 'synth.gen1.tune', 'tune', {
+        min: -50,
+        max: 50,
+        fmt: (v) => `${Math.round(v)}¢`,
+      }),
       knob(store, 'synth.gen1.level', 'level'),
     ),
     group(
       'GENERATOR 2',
       knob(store, 'synth.gen2.morph', 'wave'),
-      stepper(store, 'synth.gen2.semi', 'semi', { min: -24, max: 24, fmt: semiFmt }),
-      knob(store, 'synth.gen2.tune', 'tune', { min: -50, max: 50, fmt: (v) => `${Math.round(v)}¢` }),
+      stepper(store, 'synth.gen2.semi', 'semi', {
+        min: -24,
+        max: 24,
+        fmt: semiFmt,
+      }),
+      knob(store, 'synth.gen2.tune', 'tune', {
+        min: -50,
+        max: 50,
+        fmt: (v) => `${Math.round(v)}¢`,
+      }),
       knob(store, 'synth.gen2.level', 'level'),
     ),
-    group('TONE', knob(store, 'synth.bright', 'bright')),
     group(
       'ENVELOPE',
       knob(store, 'synth.env.a', 'attack', { min: 0.001, max: 2, fmt: secFmt }),
@@ -259,7 +408,11 @@ function synthPage(store: Store): HTMLElement {
     ),
     group(
       'LFO',
-      knob(store, 'synth.lfo.rate', 'rate', { min: 0.05, max: 20, fmt: (v) => `${v.toFixed(1)}Hz` }),
+      knob(store, 'synth.lfo.rate', 'rate', {
+        min: 0.05,
+        max: 30,
+        fmt: (v) => `${v.toFixed(1)}Hz`,
+      }),
       knob(store, 'synth.lfo.depth', 'depth'),
       select(store, 'synth.lfo.target', 'target', [
         { value: 'pitch', text: 'Pitch' },
@@ -269,7 +422,8 @@ function synthPage(store: Store): HTMLElement {
   )
 }
 
-const secFmt = (v: number) => (v < 1 ? `${Math.round(v * 1000)}ms` : `${v.toFixed(1)}s`)
+const secFmt = (v: number) =>
+  v < 1 ? `${Math.round(v * 1000)}ms` : `${v.toFixed(1)}s`
 
 function fxPage(store: Store): HTMLElement {
   return row(
@@ -281,7 +435,11 @@ function fxPage(store: Store): HTMLElement {
     ),
     group(
       'DELAY',
-      knob(store, 'fx.delay.time', 'time', { min: 0.02, max: 1.5, fmt: secFmt }),
+      knob(store, 'fx.delay.time', 'time', {
+        min: 0.01,
+        max: 2,
+        fmt: secFmt,
+      }),
       knob(store, 'fx.delay.fdbk', 'fdbk', { min: 0, max: 0.9 }),
       knob(store, 'fx.delay.mix', 'mix'),
       toggle(store, 'fx.delay.on', 'on'),
@@ -315,16 +473,24 @@ function padPage(store: Store): HTMLElement {
       stepper(store, 'pad.rows', 'rows', { min: 1, max: 8 }),
       select(store, 'pad.colScale', 'col scale', SCALE_NAMES),
       stepper(store, 'pad.baseNote', 'base', {
-        min: 12, max: 96, fmt: (v) => noteName(v, true),
+        min: 12,
+        max: 96,
+        fmt: (v) => noteName(v, true),
       }),
       toggle(store, 'pad.mirror', 'mirror'),
-      stepper(store, 'pad.mirrorOffset', 'mir offs', { min: -24, max: 24, fmt: semiFmt }),
+      stepper(store, 'pad.mirrorOffset', 'mir offs', {
+        min: -24,
+        max: 24,
+        fmt: semiFmt,
+      }),
     ),
     group(
       'TOUCH',
       knob(store, 'pad.slide', 'slide'),
       toggle(store, 'pad.frets', 'frets'),
-      knob(store, 'pad.vibrato', 'vib'),
+      knob(store, 'pad.vibrato', 'vibrato', {
+        fmt: (v) => `${Math.round(v * 100)}¢`,
+      }),
       toggle(store, 'pad.touchVel', 'tch vel'),
       toggle(store, 'pad.aftertouch', 'aftrtch'),
       knob(store, 'pad.haptics', 'haptic'),
@@ -357,15 +523,23 @@ function padPage(store: Store): HTMLElement {
   )
 }
 
-function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement {
+function midiPage(
+  store: Store,
+  midi: MidiOut,
+  engine: SynthEngine,
+): HTMLElement {
   const status = document.createElement('div')
   status.className = 'midi-status widget'
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
   status.textContent = 'MIDI off — enable to connect.'
 
-  const outSel = select(store, 'midi.outputId', 'output', [{ value: '', text: '—' }])
-  const inSel = select(store, 'midi.inputId', 'input', [{ value: '', text: '—' }])
+  const outSel = select(store, 'midi.outputId', 'output', [
+    { value: '', text: '—' },
+  ])
+  const inSel = select(store, 'midi.inputId', 'input', [
+    { value: '', text: '—' },
+  ])
 
   const refreshPorts = () => {
     for (const [sel, ports, path] of [
@@ -393,7 +567,8 @@ function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement
     if (initializing || initialized) return
     initializing = true
     if (!midi.supported) {
-      status.textContent = 'Web MIDI is not supported in this browser (iOS Safari: try Web MIDI Browser).'
+      status.textContent =
+        'Web MIDI is not supported in this browser (iOS Safari: try Web MIDI Browser).'
       initializing = false
       return
     }
@@ -408,7 +583,7 @@ function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement
       midi.onDevicesChanged(refreshPorts)
     }
   }
-  const enableMidi = button('enable midi', () => void initMidi())
+  const enableMidi = button('connect midi', () => void initMidi())
 
   return row(
     group(
@@ -418,14 +593,10 @@ function midiPage(store: Store, midi: MidiOut, engine: SynthEngine): HTMLElement
       stepper(store, 'midi.bendRange', 'bend rng', { min: 1, max: 96 }),
       toggle(store, 'midi.sendY', 'send cc74'),
     ),
-    group(
-      'MIDI IN',
-      toggle(store, 'midi.inEnabled', 'active'),
-      inSel,
-    ),
+    group('MIDI IN', toggle(store, 'midi.inEnabled', 'active'), inSel),
     group(
       'SYSTEM',
-      toggle(store, 'midi.localSound', 'synth'),
+      toggle(store, 'midi.localSound', 'local sound'),
       enableMidi,
       status,
     ),

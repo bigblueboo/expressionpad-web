@@ -16,6 +16,7 @@ function isEditable(target: EventTarget | null): boolean {
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
+    !!target.closest('button, [role=slider], [role=spinbutton]') ||
     target.isContentEditable
   )
 }
@@ -37,7 +38,10 @@ export class KeyboardInput {
 
   onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return
-    if (isEditable(e.target)) return
+    if (isEditable(e.target)) {
+      if (e.key === 'Escape' && e.target instanceof HTMLElement) e.target.blur()
+      return
+    }
     const key = this.getLayout().keys.find((k) => k.code === e.code)
     if (!key) return
     e.preventDefault()

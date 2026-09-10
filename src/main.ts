@@ -43,15 +43,59 @@ const sampler = new SamplerEngine(store, engine)
 const midiOut = new MidiOut(store)
 
 const router = new Router()
-router.add(engine, () => store.state.midi.localSound && store.state.voice === 'synth')
-router.add(sampler, () => store.state.midi.localSound && store.state.voice === 'sampler')
+router.add(
+  engine,
+  () => store.state.midi.localSound && store.state.voice === 'synth',
+)
+router.add(
+  sampler,
+  () => store.state.midi.localSound && store.state.voice === 'sampler',
+)
 router.add(midiOut, () => store.state.midi.outEnabled)
 
 buildControls(store, engine, sampler, midiOut, router, app)
 
+const surfaceStrip = document.createElement('div')
+surfaceStrip.className = 'surface-strip'
+surfaceStrip.innerHTML =
+  '<span class="surface-title">Playing surface</span><span class="surface-detail"></span>'
+app.appendChild(surfaceStrip)
+const syncSurface = () => {
+  const p = store.state.pad
+  const names: Record<string, string> = {
+    square: 'Square',
+    hex: 'Hexagon',
+    piano: 'Piano',
+    'kbd-chromatic': 'Keyboard · chromatic',
+    'kbd-piano': 'Keyboard · piano',
+  }
+  surfaceStrip.querySelector('.surface-detail')!.textContent =
+    `${names[p.layout]} / ${p.layout.startsWith('kbd') ? 'QWERTY' : `${p.rows} × ${p.cols}`}${p.mirror ? ' / mirror' : ''}`
+}
+syncSurface()
+store.subscribe((_s, path) => {
+  if (path.startsWith('pad')) syncSurface()
+})
+
 const padContainer = document.createElement('main')
 padContainer.className = 'pad-container'
 app.appendChild(padContainer)
+
+const footer = document.createElement('footer')
+footer.className = 'instrument-footer'
+footer.innerHTML =
+  '<span class="screw" aria-hidden="true"></span><span class="playing-hint">Touch to play · slide to bend</span><span class="footer-model">POLYPHONIC EXPRESSION / EP–02</span><span class="screw" aria-hidden="true"></span>'
+app.appendChild(footer)
+const syncHint = () => {
+  footer.querySelector('.playing-hint')!.textContent =
+    store.state.pad.layout.startsWith('kbd')
+      ? 'Type to play · Esc returns to the pad'
+      : 'Touch to play · slide to bend'
+}
+syncHint()
+store.subscribe((_s, path) => {
+  if (path === 'pad.layout') syncHint()
+})
 
 const pad = new PadView(store, router, padContainer)
 
@@ -61,9 +105,12 @@ keyboard.attach(window)
 
 // MIDI in drives whichever local voice is active (never MIDI out — no echo).
 const localVoice: VoiceSink = {
-  noteOn: (id, p, v) => (store.state.voice === 'sampler' ? sampler : engine).noteOn(id, p, v),
-  glide: (id, p) => (store.state.voice === 'sampler' ? sampler : engine).glide(id, p),
-  pressure: (id, v) => (store.state.voice === 'sampler' ? sampler : engine).pressure(id, v),
+  noteOn: (id, p, v) =>
+    (store.state.voice === 'sampler' ? sampler : engine).noteOn(id, p, v),
+  glide: (id, p) =>
+    (store.state.voice === 'sampler' ? sampler : engine).glide(id, p),
+  pressure: (id, v) =>
+    (store.state.voice === 'sampler' ? sampler : engine).pressure(id, v),
   noteOff: (id) => {
     engine.noteOff(id)
     sampler.noteOff(id)
@@ -75,11 +122,15 @@ const localVoice: VoiceSink = {
 }
 const midiIn = new MidiIn(store, localVoice)
 midiOut.onDevicesChanged(() => {
-  if (midiOut.access && store.state.midi.inEnabled) midiIn.attach(midiOut.access)
+  if (midiOut.access && store.state.midi.inEnabled)
+    midiIn.attach(midiOut.access)
   else midiIn.detach()
 })
 store.subscribe((_s, path) => {
-  if ((path === 'midi.inEnabled' || path === 'midi.inputId') && midiOut.access) {
+  if (
+    (path === 'midi.inEnabled' || path === 'midi.inputId') &&
+    midiOut.access
+  ) {
     if (store.state.midi.inEnabled) midiIn.attach(midiOut.access)
     else midiIn.detach()
   }

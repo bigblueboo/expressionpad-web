@@ -69,8 +69,10 @@ export class TouchTracker {
     this.onChange = opts.onChange ?? (() => {})
     this.onTrigger = opts.onTrigger ?? (() => {})
     this.onFret = opts.onFret ?? (() => {})
-    this.now = opts.now
-      ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()))
+    this.now =
+      opts.now ??
+      (() =>
+        typeof performance !== 'undefined' ? performance.now() : Date.now())
   }
 
   down(id: number, x: number, y: number): void {
@@ -81,8 +83,18 @@ export class TouchTracker {
     if (this.active.has(id)) this.up(id)
     const vel = pad.touchVel ? velocityFromKey(key, y) : 0.8
     const touch: ActiveTouch = {
-      id, key, currentRow: key.row, startY: y, pitch: key.note, pressure: 0, x, y,
-      anchorX: x, bend: 0, lastSemi: Math.round(key.note), lastMs: this.now(),
+      id,
+      key,
+      currentRow: key.row,
+      startY: y,
+      pitch: key.note,
+      pressure: 0,
+      x,
+      y,
+      anchorX: x,
+      bend: 0,
+      lastSemi: Math.round(key.note),
+      lastMs: this.now(),
     }
     this.active.set(id, touch)
     this.sink.noteOn(id, clampMidi(key.note), vel)
@@ -105,9 +117,11 @@ export class TouchTracker {
       const t = this.now()
       const dt = Math.max(0, t - touch.lastMs)
       touch.lastMs = t
-      touch.anchorX += (x - touch.anchorX) * (1 - Math.exp(-dt / VIB_RECENTER_MS))
+      touch.anchorX +=
+        (x - touch.anchorX) * (1 - Math.exp(-dt / VIB_RECENTER_MS))
       const span = Math.max(1, touch.key.w)
-      touch.bend = Math.max(-1, Math.min(1, (x - touch.anchorX) / span)) * pad.vibrato
+      touch.bend =
+        Math.max(-1, Math.min(1, (x - touch.anchorX) / span)) * pad.vibrato
     }
 
     if (pad.slide > 0) {
@@ -166,6 +180,26 @@ export class TouchTracker {
     this.onChange()
   }
 
+  /** Resize the existing musical layout without retriggering its held voices. */
+  reflow(previous: Layout): void {
+    const layout = this.getLayout()
+    const keys = new Map(layout.keys.map((key) => [key.id, key]))
+    for (const touch of this.active.values()) {
+      const next = keys.get(touch.key.id)
+      if (!next) continue // Musical changes use cancelAll(), never reflow().
+      const sx = next.w / touch.key.w
+      const sy = next.h / touch.key.h
+      const x = next.cx + (touch.x - touch.key.cx) * sx
+      const y = next.cy + (touch.y - touch.key.cy) * sy
+      touch.anchorX = next.cx + (touch.anchorX - touch.key.cx) * sx
+      touch.startY =
+        y + ((touch.startY - touch.y) * layout.rowHeight) / previous.rowHeight
+      touch.x = x
+      touch.y = y
+      touch.key = next
+    }
+  }
+
   up(id: number): void {
     if (!this.active.has(id)) return
     this.active.delete(id)
@@ -194,7 +228,11 @@ export function touchesToPad(
   const out: Array<{ id: number; x: number; y: number }> = []
   for (let i = 0; i < list.length; i++) {
     const t = list[i]
-    out.push({ id: t.identifier, x: t.clientX - rect.left, y: t.clientY - rect.top })
+    out.push({
+      id: t.identifier,
+      x: t.clientX - rect.left,
+      y: t.clientY - rect.top,
+    })
   }
   return out
 }

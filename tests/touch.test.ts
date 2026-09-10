@@ -9,27 +9,56 @@ type Call = [string, ...number[]]
 
 class SpySink implements VoiceSink {
   calls: Call[] = []
-  noteOn(id: number, pitch: number, vel: number) { this.calls.push(['on', id, pitch, vel]) }
-  glide(id: number, pitch: number) { this.calls.push(['glide', id, pitch]) }
-  pressure(id: number, value: number) { this.calls.push(['pressure', id, value]) }
-  noteOff(id: number) { this.calls.push(['off', id]) }
-  allOff() { this.calls.push(['allOff']) }
-  ofType(t: string) { return this.calls.filter((c) => c[0] === t) }
+  noteOn(id: number, pitch: number, vel: number) {
+    this.calls.push(['on', id, pitch, vel])
+  }
+  glide(id: number, pitch: number) {
+    this.calls.push(['glide', id, pitch])
+  }
+  pressure(id: number, value: number) {
+    this.calls.push(['pressure', id, value])
+  }
+  noteOff(id: number) {
+    this.calls.push(['off', id])
+  }
+  allOff() {
+    this.calls.push(['allOff'])
+  }
+  ofType(t: string) {
+    return this.calls.filter((c) => c[0] === t)
+  }
 }
 
 function makePad(over: Partial<PadConfig> = {}): PadConfig {
   return {
-    layout: 'square', rows: 4, cols: 12, rowTuning: 'Fourths [+5]',
-    colScale: 'Chromatic', baseNote: 48, slide: 0, frets: false,
-    touchVel: false, aftertouch: false,
-    mirror: false, mirrorOffset: 0, vibrato: 0, haptics: 0, ...over,
+    layout: 'square',
+    rows: 4,
+    cols: 12,
+    rowTuning: 'Fourths [+5]',
+    colScale: 'Chromatic',
+    baseNote: 48,
+    slide: 0,
+    frets: false,
+    touchVel: false,
+    aftertouch: false,
+    mirror: false,
+    mirrorOffset: 0,
+    vibrato: 0,
+    haptics: 0,
+    ...over,
   }
 }
 
 function makeLayout(): Layout {
   return buildLayout({
-    kind: 'square', rows: 4, cols: 12, width: 1200, height: 400,
-    baseNote: 48, rowOffsets: [0, 5, 10, 15], scale: SCALES.Chromatic,
+    kind: 'square',
+    rows: 4,
+    cols: 12,
+    width: 1200,
+    height: 400,
+    baseNote: 48,
+    rowOffsets: [0, 5, 10, 15],
+    scale: SCALES.Chromatic,
   })
 }
 
@@ -42,13 +71,52 @@ describe('TouchTracker', () => {
   beforeEach(() => {
     sink = new SpySink()
     pad = makePad()
-    tracker = new TouchTracker({ getLayout: () => layout, getPad: () => pad, sink })
+    tracker = new TouchTracker({
+      getLayout: () => layout,
+      getPad: () => pad,
+      sink,
+    })
+  })
+
+  it('preserves held pitches and pressure through viewport reflow', () => {
+    let current = makeLayout()
+    const pad = makePad({ slide: 1, aftertouch: true })
+    const sink = new SpySink()
+    const tracker = new TouchTracker({
+      getLayout: () => current,
+      getPad: () => pad,
+      sink,
+    })
+    tracker.down(1, 150, 375)
+    tracker.move(1, 150, 350)
+    tracker.down(2, 250, 375)
+    const pressure = tracker.active.get(1)!.pressure
+    const calls = [...sink.calls]
+    const previous = current
+    current = buildLayout({ ...current.params, width: 600, height: 200 })
+    tracker.reflow(previous)
+    expect(sink.calls).toEqual(calls)
+    expect(tracker.active.get(1)!.pitch).toBe(49)
+    expect(tracker.active.get(1)!.key).toBe(
+      current.keys.find((k) => k.id === tracker.active.get(1)!.key.id),
+    )
+    tracker.move(1, 75, 175)
+    expect(tracker.active.get(1)!.pressure).toBeCloseTo(pressure)
+    expect(sink.calls).toEqual(calls)
+    tracker.up(1)
+    tracker.up(2)
+    expect(sink.ofType('off')).toEqual([
+      ['off', 1],
+      ['off', 2],
+    ])
   })
 
   it('fires onTrigger at event time for downs and drag retriggers', () => {
     const triggered: number[] = []
     tracker = new TouchTracker({
-      getLayout: () => layout, getPad: () => pad, sink,
+      getLayout: () => layout,
+      getPad: () => pad,
+      sink,
       onTrigger: (key) => triggered.push(key.note),
     })
     tracker.down(1, 50, 390) // C3
@@ -102,7 +170,9 @@ describe('TouchTracker', () => {
     pad.slide = 0.5
     const triggered: number[] = []
     tracker = new TouchTracker({
-      getLayout: () => layout, getPad: () => pad, sink,
+      getLayout: () => layout,
+      getPad: () => pad,
+      sink,
       onTrigger: (key) => triggered.push(key.id),
     })
     tracker.down(1, 50, 390)
@@ -232,8 +302,11 @@ describe('in-key vibrato and fret crossings', () => {
 
   const make = () =>
     new TouchTracker({
-      getLayout: () => layout, getPad: () => pad, sink,
-      onFret: () => frets++, now: () => clock,
+      getLayout: () => layout,
+      getPad: () => pad,
+      sink,
+      onFret: () => frets++,
+      now: () => clock,
     })
 
   beforeEach(() => {

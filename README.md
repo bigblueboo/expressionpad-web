@@ -14,8 +14,18 @@ shape.
 npm install
 npm run dev        # local dev server
 npm test           # vitest suite
+npm run test:ui    # browser interaction checks (requires Chrome)
 npm run build      # production bundle (dist/)
 node scripts/shots.mjs   # device-emulated screenshots (needs `npm run preview` running)
+```
+
+The dev server uses port **5180**. On this Mac, the Tailscale HTTPS address is
+**https://m4air.tail15c530.ts.net:8446/**. Devices connected to the tailnet can
+use that address while the Mac and dev server are running. The proxy runs in
+the background and can be restored with:
+
+```sh
+tailscale serve --bg --https=8446 http://127.0.0.1:5180
 ```
 
 Serve over HTTPS (or localhost) for Web MIDI. On iOS Safari Web MIDI is not
@@ -35,6 +45,12 @@ cd ios/Core
 - **Continuous multi-touch**: every finger is an independent voice with its
   own pitch bend (slide), velocity (vertical position at onset), and
   aftertouch (vertical drag).
+- **Studio interface**: a warm-grey instrument enclosure, tactile controls,
+  inset sound-source display, and molded keycaps. Hexagons keep equal edges
+  as the surface resizes. Studio is the new default palette; saved colors
+  remain unchanged. Root keys carry octave labels.
+  Short landscape screens place the control banks beside the playing surface;
+  overflowing banks provide a section selector and a More controls button.
 - **Layouts**: square grid, hexagon grid, stacked piano — any rows × cols,
   portrait or landscape. Row tunings (fourths, fifths, guitar EADGBE,
   Open C…), column scales (chromatic, modes, pentatonics…), any base note.
@@ -85,8 +101,12 @@ cd ios/Core
   Setup) or loopMIDI (Windows). The native app also publishes an
   "expressionPad" CoreMIDI virtual source, so iOS synths just select it as
   an input. MIDI input plays the internal synth (notes only, by design).
-- **Collapsible controls**: tab bar (SYNTH | SMPLR | FX | PAD | MIDI) with a chevron
-  to collapse everything and play full-screen. Tap the active tab to toggle.
+- **Collapsible controls**: tab bar (SYNTH | SMPLR | FX | PAD | MIDI) with a
+  Hide/Show button to maximize playing space. Tap the active tab to toggle.
+  The sound-source selector and Panic stay
+  available while editing is hidden. Changing a control bank preserves held
+  notes; changing musical geometry intentionally releases them. Selectors
+  retain keyboard focus; Escape returns to playing.
 - **URL config**: share setups, e.g. `?layout=hex&scheme=Rainbow&rows=6&cols=14`.
 
 State persists to localStorage on the web and UserDefaults on iOS. Persisted
