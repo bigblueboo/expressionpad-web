@@ -32,7 +32,7 @@ Serve over HTTPS (or localhost) for Web MIDI. On iOS Safari Web MIDI is not
 available — the internal synth still works. MIDI permission is requested only
 after choosing **Enable MIDI** in the MIDI tab.
 
-For the native app, open `ios/ExpressionPad.xcodeproj` in Xcode and run the
+For the native app, open `ios/xpad.xcodeproj` in Xcode and run the
 `ExpressionPad` scheme. Its framework tests can also be run directly:
 
 ```sh
@@ -46,11 +46,14 @@ cd ios/Core
   own pitch bend (slide), velocity (vertical position at onset), and
   aftertouch (vertical drag).
 - **Studio interface**: a warm-grey instrument enclosure, tactile controls,
-  inset sound-source display, and molded keycaps. Hexagons keep equal edges
+  inset sound-source display, and one recessed LCD playing surface with flat
+  note regions, root markers, and inverted held notes. Hexagons keep equal edges
   as the surface resizes. Studio is the new default palette; saved colors
   remain unchanged. Root keys carry octave labels.
   Short landscape screens place the control banks beside the playing surface;
   overflowing banks provide a section selector and a More controls button.
+  The always-visible **Theme** selector above the pad offers System (the
+  device default), Light, and Dark, and remembers the choice on this browser.
 - **Layouts**: square grid, hexagon grid, stacked piano — any rows × cols,
   portrait or landscape. Row tunings (fourths, fifths, guitar EADGBE,
   Open C…), column scales (chromatic, modes, pentatonics…), any base note.

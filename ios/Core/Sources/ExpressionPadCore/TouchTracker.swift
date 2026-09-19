@@ -99,6 +99,11 @@ public final class TouchTracker {
             touch.anchorX += (x - touch.anchorX) * (1 - exp(-dt / VIB_RECENTER_MS))
             let span = max(1, touch.key.w)
             touch.bend = max(-1, min(1, (x - touch.anchorX) / span)) * pad.vibrato
+            if abs(touch.bend) < 0.0001 { touch.bend = 0; touch.anchorX = x }
+        } else {
+            touch.bend = 0
+            touch.anchorX = x
+            touch.lastMs = now()
         }
 
         if pad.slide > 0 {
@@ -128,7 +133,7 @@ public final class TouchTracker {
                 touch.bend = 0
                 sink.noteOn(id, clampMidi(Double(over.note)), vel)
                 onTrigger(over)
-            } else if vibrato {
+            } else {
                 let pitch = clampMidi(Double(touch.key.note) + touch.bend)
                 if pitch != touch.pitch {
                     touch.pitch = pitch
@@ -152,8 +157,43 @@ public final class TouchTracker {
                 sink.pressure(id, pressure)
             }
         }
+        if !pad.aftertouch && touch.pressure != 0 {
+            touch.pressure = 0
+            sink.pressure(id, 0)
+        }
         active[id] = touch
         onChange()
+    }
+
+    /// The vibrato spring keeps relaxing even when UIKit sends no movement.
+    public var needsAdvance: Bool { active.values.contains { $0.bend != 0 } }
+
+    public func advance() {
+        for touch in active.values where touch.bend != 0 { move(touch.id, touch.x, touch.y) }
+    }
+
+    /// Apply expression changes to held voices without releasing or retriggering.
+    public func reconcileExpression() {
+        for touch in active.values { move(touch.id, touch.x, touch.y) }
+    }
+
+    /// Preserve voices and expression when only the surface dimensions change.
+    public func reflow(from previous: Layout) {
+        let layout = getLayout()
+        let keys = Dictionary(uniqueKeysWithValues: layout.keys.map { ($0.id, $0) })
+        for (id, var touch) in active {
+            guard let next = keys[touch.key.id] else { continue }
+            let sx = next.w / touch.key.w
+            let sy = next.h / touch.key.h
+            let x = next.cx + (touch.x - touch.key.cx) * sx
+            let y = next.cy + (touch.y - touch.key.cy) * sy
+            touch.anchorX = next.cx + (touch.anchorX - touch.key.cx) * sx
+            touch.startY = y + (touch.startY - touch.y) * layout.rowHeight / previous.rowHeight
+            touch.x = x
+            touch.y = y
+            touch.key = next
+            active[id] = touch
+        }
     }
 
     public func up(_ id: Int) {

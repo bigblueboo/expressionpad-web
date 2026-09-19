@@ -23,7 +23,7 @@ public struct KeyColors: Sendable {
     public var label: HSL
 }
 
-public let SCHEME_NAMES = ["Ocean", "Magenta", "Rainbow", "Mono"]
+public let SCHEME_NAMES = ["Studio", "Ocean", "Magenta", "Rainbow", "Mono"]
 
 public struct ColorOpts: Sendable {
     /// 0..1 overall brightness.
@@ -32,11 +32,13 @@ public struct ColorOpts: Sendable {
     public var contrast: Double
     /// Base note of the pad — its pitch class is emphasized as the root.
     public var baseNote: Int
+    public var dark: Bool
 
-    public init(brightness: Double, contrast: Double, baseNote: Int) {
+    public init(brightness: Double, contrast: Double, baseNote: Int, dark: Bool = false) {
         self.brightness = brightness
         self.contrast = contrast
         self.baseNote = baseNote
+        self.dark = dark
     }
 }
 
@@ -46,6 +48,16 @@ func schemeHsl(_ scheme: String, _ key: KeyShape, _ opts: ColorOpts) -> HSL {
     let fromRoot = Double((pc - rootPc + 12) % 12)
     let isRoot = fromRoot == 0
     switch scheme {
+    case "Studio":
+        let black = key.kind == .black
+        let accidental = BLACK_PCS.contains(pc) && key.kind != .white
+        let c = opts.contrast
+        if opts.dark {
+            let l = black ? 14 - 4 * c : isRoot ? 37 + 3 * c : accidental ? 21 - 5 * c : 28 + 6 * c
+            return HSL(h: 76, s: 17, l: l * (0.7 + 0.45 * opts.brightness))
+        }
+        let l = black ? 27 - 10 * c : (isRoot ? 66 + 4 * c : accidental ? 66 - 8 * c : 72 + 8 * c) + (opts.brightness - 0.65) * 24
+        return HSL(h: 76, s: 19, l: l)
     case "Rainbow":
         return HSL(h: fromRoot * 30, s: 62, l: isRoot ? 56 : 42)
     case "Magenta":
@@ -65,6 +77,7 @@ public func keyColors(_ scheme: String, _ key: KeyShape, _ opts: ColorOpts) -> K
     // CONTRAST widens or narrows the light/dark spread between whites and
     // blacks (0.5 keeps blacks at their resting depth).
     let c = opts.contrast
+    if scheme != "Studio" {
     // Grid keys take a cue from the piano: conventional black-key pitch
     // classes go dark like piano blacks, so the natural lattice is legible
     // at a glance. An accidental root keeps a little extra light.
@@ -82,13 +95,17 @@ public func keyColors(_ scheme: String, _ key: KeyShape, _ opts: ColorOpts) -> K
         hsl.l = 22 - 12 * c
     }
     hsl.l = max(4, min(92, hsl.l * (0.55 + 0.9 * opts.brightness)))
+    }
     let fill = hsl
     let stroke = HSL(h: hsl.h, s: max(0, hsl.s - 15), l: max(0, hsl.l - 14))
-    // Pick whichever label tone actually reads against this fill.
-    let dark = HSL(h: hsl.h, s: 25, l: 10)
-    let light = HSL(h: hsl.h, s: 20, l: 92)
-    let label = contrastRatio(dark, fill) >= contrastRatio(light, fill) ? dark : light
-    return KeyColors(fill: fill, stroke: stroke, label: label)
+    return KeyColors(fill: fill, stroke: stroke, label: labelColor(fill))
+}
+
+/// Recalculate contrast after ripples and held-note inversion as well.
+public func labelColor(_ fill: HSL) -> HSL {
+    let dark = HSL(h: fill.h, s: 10, l: 1)
+    let light = HSL(h: fill.h, s: 10, l: 99.5)
+    return contrastRatio(dark, fill) >= contrastRatio(light, fill) ? dark : light
 }
 
 /// WCAG-ish relative luminance (approximate, for contrast checks).

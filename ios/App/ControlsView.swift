@@ -15,91 +15,127 @@ private let TABS: [(id: UiTab, label: String)] = [
 ]
 
 struct ControlsView: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ObservedObject var store: Store
     let audio: AudioEngine
     @ObservedObject var midi: MidiCenter
     let router: Router
 
+    @State private var showingBanks = false
+
+    var tabsOnly = false
+    var compactNavigation = false
+    var onOpenControls: (() -> Void)?
+
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            if store.state.ui.panelOpen {
-                panel
-            }
-        }
-        .background(Theme.topbarBg)
+        if tabsOnly { topBar } else { panel }
     }
 
-    private var topBar: some View {
-        HStack(spacing: 4) {
-            if horizontalSizeClass != .compact {
-                Text("expressionPad")
-                    .font(Theme.fontMedium(15))
-                    .foregroundColor(Theme.accent)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.trailing, 10)
+    @ViewBuilder private var topBar: some View {
+        if typeSize.isAccessibilitySize || compactNavigation {
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(TABS, id: \.id) { tab in
+                        Button(tab.id.controlTitle) { store.set(\.ui.tab, tab.id); store.set(\.ui.panelOpen, true); onOpenControls?() }
+                            .accessibilityIdentifier("tab-\(tab.id.rawValue)")
+                    }
+                } label: {
+                    HStack { Text("\(store.state.ui.tab.controlTitle) controls"); Image(systemName: "chevron.down") }
+                        .font(Theme.fontMedium(12)).padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(InstrumentButtonStyle()).accessibilityIdentifier("control-pages")
+                Button { onOpenControls?() } label: {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 18, weight: .medium))
+                        .frame(width: 44, height: 44)
+                }.buttonStyle(InstrumentButtonStyle())
+                    .accessibilityLabel("Open controls")
+                    .accessibilityIdentifier("panel-toggle")
+            }.padding(.bottom, 5)
+        } else { standardTabs }
+    }
+
+    private var standardTabs: some View {
+        HStack(spacing: 6) {
+            ForEach(TABS, id: \.id) { tab in tabButton(tab.id, tab.label) }
+            Button { store.set(\.ui.panelOpen, !store.state.ui.panelOpen) } label: {
+                Text(store.state.ui.panelOpen ? "HIDE" : "SHOW")
+                    .font(Theme.fontMedium(10)).frame(minWidth: 44, minHeight: 44)
             }
-            ForEach(TABS, id: \.id) { tab in
-                tabButton(tab.id, tab.label)
-            }
-            Button {
-                store.set(\.ui.panelOpen, !store.state.ui.panelOpen)
-            } label: {
-                Text("«")
-                    .font(.system(size: 20))
-                    .foregroundColor(Theme.accent)
-                    .rotationEffect(.degrees(store.state.ui.panelOpen ? 0 : 180))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("toggle control panel")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity)
-        .background(Theme.topbarBg)
-        .overlay(alignment: .bottom) { Theme.line.frame(height: 1) }
+            .buttonStyle(InstrumentButtonStyle())
+            .accessibilityLabel(store.state.ui.panelOpen ? "Hide controls" : "Show controls")
+            .accessibilityIdentifier("panel-toggle")
+        }.padding(.bottom, 5)
     }
 
     private func tabButton(_ id: UiTab, _ label: String) -> some View {
         let active = store.state.ui.tab == id && store.state.ui.panelOpen
         return Button {
-            if store.state.ui.tab == id && store.state.ui.panelOpen {
-                store.set(\.ui.panelOpen, false)
-            } else {
-                store.set(\.ui.tab, id)
-                store.set(\.ui.panelOpen, true)
-            }
+            if active { store.set(\.ui.panelOpen, false) }
+            else { store.set(\.ui.tab, id); store.set(\.ui.panelOpen, true) }
         } label: {
-            HStack(spacing: 2) {
-                if active {
-                    Circle().fill(Theme.accent).frame(width: 4, height: 4)
-                }
-                Text(label)
-                    .font(Theme.font(14))
-                    .tracking(1.6)
-                    .foregroundColor(active ? Theme.text : Theme.textDim)
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
+            VStack(spacing: 5) {
+                Text(label).font(Theme.fontMedium(10)).lineLimit(1)
+                Circle().fill(active ? Theme.accent : Theme.textDim.opacity(0.5)).frame(width: 4, height: 4)
+            }.frame(minWidth: 44, maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InstrumentButtonStyle(selected: active))
+        .accessibilityLabel(id.controlTitle)
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityIdentifier("tab-\(id.rawValue)")
+    }
+
+    private var banks: [String] {
+        switch store.state.ui.tab {
+        case .synth: return ["PRESET", "GENERATOR 1", "GENERATOR 2", "TONE", "ENVELOPE", "FILTER", "LFO"]
+        case .smplr: return ["SAMPLER", "LEVEL", "USER ROOT"]
+        case .fx: return ["REVERB", "DELAY", "DISTORT", "FATTEN"]
+        case .pad: return ["PADMATRIX", "TOUCH", "EXPRESSION", "APPEARANCE"]
+        case .midi: return ["MIDI OUT", "MIDI IN", "SYSTEM"]
+        }
     }
 
     private var panel: some View {
-        ScrollView(.vertical) {
-            page
-                .padding(.init(top: 6, leading: 8, bottom: 8, trailing: 8))
-                .frame(maxWidth: .infinity, alignment: .leading)
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                ScrollView(.vertical) {
+                    page.padding(.horizontal, 2).padding(.bottom, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.scrollIndicators(.visible)
+                    .mask {
+                        VStack(spacing: 0) {
+                            Color.black
+                            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 10)
+                        }
+                    }
+                HStack {
+                    if typeSize.isAccessibilitySize {
+                        Button { showingBanks = true } label: { bankLabel }
+                            .accessibilityIdentifier("control-bank")
+                            .navigationDestination(isPresented: $showingBanks) {
+                                List(banks, id: \.self) { bank in
+                                    Button(bank) { showingBanks = false; proxy.scrollTo(bank, anchor: .top) }
+                                        .font(Theme.font(16)).foregroundStyle(Theme.text).padding(.vertical, 8)
+                                }.navigationTitle("Control bank").accessibilityIdentifier("bank-list")
+                            }
+
+                    } else {
+                        Menu {
+                            ForEach(banks, id: \.self) { bank in
+                                Button(bank) { proxy.scrollTo(bank, anchor: .top) }
+                            }
+                        } label: { bankLabel }.accessibilityIdentifier("control-bank")
+                    }
+                    Spacer(minLength: 0)
+                    if !typeSize.isAccessibilitySize { Text("SCROLL ↕").font(Theme.mono(9)).accessibilityHidden(true) }
+                }.foregroundStyle(Theme.textDim)
+                    .overlay(alignment: .top) { Theme.line.frame(height: 1) }
+            }
+            .onChange(of: store.state.ui.tab) { _, _ in proxy.scrollTo(banks[0], anchor: .top) }
         }
-        .frame(maxHeight: verticalSizeClass == .compact ? 160 : 320)
-        .background(Theme.panelBg)
-        .overlay(alignment: .bottom) { Theme.line.frame(height: 1) }
+    }
+
+    private var bankLabel: some View {
+        Label("Control bank", systemImage: "slider.horizontal.3")
+            .font(Theme.font(11)).frame(minHeight: 44)
     }
 
     @ViewBuilder private var page: some View {
@@ -109,20 +145,6 @@ struct ControlsView: View {
         case .fx: FxPage(store: store)
         case .pad: PadPage(store: store)
         case .midi: MidiPage(store: store, audio: audio, midi: midi)
-        }
-    }
-}
-
-/// SYNTH/SMPLR exclusivity switch — only one local sound source at a time.
-private struct VoiceGroup: View {
-    @ObservedObject var store: Store
-
-    var body: some View {
-        PanelGroup(title: "VOICE") {
-            SelectMenu(
-                selection: store.binding(\.voice), label: "active",
-                options: [(VoiceSource.synth, "Synth"), (VoiceSource.sampler, "Sampler")]
-            )
         }
     }
 }
@@ -144,7 +166,6 @@ private struct SynthPage: View {
                 )
                 Knob(value: store.binding(\.synth.level), label: "level")
             }
-            VoiceGroup(store: store)
             genGroup("GENERATOR 1", \.synth.gen1)
             genGroup("GENERATOR 2", \.synth.gen2)
             PanelGroup(title: "TONE") {
@@ -206,7 +227,7 @@ private struct SmplrPage: View {
                 )
                 ActionButton(label: "load") { importing = true }
                 ToggleSquare(isOn: store.binding(\.sampler.retrig), label: "retrig")
-                ActionButton(label: "panic") { router.allOff() }
+                ActionButton(label: "panic") { router.panic() }
                 Text(statusText)
                     .font(Theme.font(10))
                     .foregroundColor(Theme.textDim)
@@ -223,7 +244,6 @@ private struct SmplrPage: View {
                     min: 24, max: 96, fmt: { noteName($0, withOctave: true) }
                 )
             }
-            VoiceGroup(store: store)
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
             switch result {
@@ -421,4 +441,16 @@ private struct BluetoothMidiPairingView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: CABTMIDICentralViewController, context: Context) {}
+}
+
+extension UiTab {
+    var controlTitle: String {
+        switch self {
+        case .synth: "Synth"
+        case .smplr: "Sampler"
+        case .fx: "Effects"
+        case .pad: "Pad"
+        case .midi: "MIDI"
+        }
+    }
 }

@@ -174,15 +174,12 @@ func hexPoly(_ cx: Double, _ cy: Double, _ rx: Double, _ ry: Double) -> [SIMD2<D
 }
 
 func buildHex(_ p: LayoutParams) -> Layout {
-    // Pointy-top hexes; odd rows shift right by half a hex width. Start from
-    // the largest regular hex that fits, then stretch (capped) to fill the
-    // surface like the original app did.
+    // Keep regular hexagons at every window size; center the fitted lattice.
     let rByWidth = p.width / (3.0.squareRoot() * (Double(p.cols) + 0.5))
     let rByHeight = p.height / (1.5 * Double(p.rows) + 0.5)
     let r = min(rByWidth, rByHeight)
-    let MAX_STRETCH = 1.6
-    let sx = min(MAX_STRETCH, rByWidth / r)
-    let sy = min(MAX_STRETCH, rByHeight / r)
+    let sx = 1.0
+    let sy = 1.0
     let hexW = 3.0.squareRoot() * r * sx
     let ry = r * sy
     let gridW = hexW * (Double(p.cols) + 0.5)
@@ -222,8 +219,12 @@ func buildHex(_ p: LayoutParams) -> Layout {
                     best = k
                 }
             }
-            // Reject touches well outside the grid.
-            if best != nil && bestD > (2 * r) * (2 * r) { return nil }
+            // Blank screen around the regular lattice is not a playable key.
+            guard let nearest = best else { return nil }
+            let dx = abs(x - nearest.cx)
+            let dy = abs(y - nearest.cy)
+            if dx > nearest.w / 2 || dy > nearest.h / 2 ||
+                dy > nearest.h / 2 - dx / 3.0.squareRoot() { return nil }
             return best
         },
         pitchAtFn: { x, row in

@@ -134,6 +134,7 @@ public struct MidiConfig: Codable, Equatable, Sendable {
 }
 
 public struct AppearanceConfig: Codable, Equatable, Sendable {
+    public var theme: String = "system"
     public var scheme: String
     public var labels: Bool
     public var brightness: Double
@@ -208,7 +209,7 @@ public func defaultState() -> AppState {
             inEnabled: false, inputId: "", localSound: true
         ),
         appearance: AppearanceConfig(
-            scheme: "Ocean", labels: true, brightness: 0.65,
+            scheme: "Studio", labels: true, brightness: 0.65,
             ripples: true, rippleAmount: 0.5, contrast: 0.5
         ),
         ui: UiConfig(panelOpen: true, tab: .pad)
@@ -283,6 +284,7 @@ public enum PathMap {
         (\AppState.midi.inEnabled, "midi.inEnabled"),
         (\AppState.midi.inputId, "midi.inputId"),
         (\AppState.midi.localSound, "midi.localSound"),
+        (\AppState.appearance.theme, "appearance.theme"),
         (\AppState.appearance.scheme, "appearance.scheme"),
         (\AppState.appearance.labels, "appearance.labels"),
         (\AppState.appearance.brightness, "appearance.brightness"),
@@ -441,6 +443,7 @@ public func sanitizeState(_ input: AppState) -> AppState {
     state.fx.fatten.amt = finite(state.fx.fatten.amt, d.fx.fatten.amt, 0, 1)
     state.midi.bendRange = clamp(state.midi.bendRange, 1, 96)
 
+    if !["system", "light", "dark"].contains(state.appearance.theme) { state.appearance.theme = "system" }
     if !SCHEME_NAMES.contains(state.appearance.scheme) { state.appearance.scheme = d.appearance.scheme }
     state.appearance.brightness = finite(state.appearance.brightness, d.appearance.brightness, 0, 1)
     state.appearance.rippleAmount = finite(state.appearance.rippleAmount, d.appearance.rippleAmount, 0, 1)

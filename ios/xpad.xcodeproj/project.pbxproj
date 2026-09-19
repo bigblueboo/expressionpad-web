@@ -6,6 +6,29 @@
 	objectVersion = 77;
 	objects = {
 
+/* Native instrument UI regression target */
+        EPUI000000000001 = {isa = PBXFileSystemSynchronizedRootGroup; path = UITests; sourceTree = "<group>"; };
+        EPUI000000000002 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = ExpressionPadUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        EPUI000000000003 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        EPUI000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        EPUI000000000005 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        EPUI000000000006 = {isa = PBXContainerItemProxy; containerPortal = EP00000D0000000D; proxyType = 1; remoteGlobalIDString = EP00000500000005; remoteInfo = ExpressionPad; };
+        EPUI000000000007 = {isa = PBXTargetDependency; target = EP00000500000005; targetProxy = EPUI000000000006; };
+        EPUI000000000008 = {isa = PBXNativeTarget; name = ExpressionPadUITests; productName = ExpressionPadUITests; productReference = EPUI000000000002;
+            productType = "com.apple.product-type.bundle.ui-testing"; buildConfigurationList = EPUI000000000009;
+            buildPhases = (EPUI000000000003, EPUI000000000004, EPUI000000000005); dependencies = (EPUI000000000007);
+            buildRules = (); fileSystemSynchronizedGroups = (EPUI000000000001); };
+        EPUI000000000009 = {isa = XCConfigurationList; buildConfigurations = (EPUI00000000000A, EPUI00000000000B); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        EPUI00000000000A = {isa = XCBuildConfiguration; name = Debug; buildSettings = {
+            GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.charliedeck.expressionpad.uitests;
+            PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_TARGET_NAME = ExpressionPad;
+            TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = WG6AA279AN;
+        }; };
+        EPUI00000000000B = {isa = XCBuildConfiguration; name = Release; buildSettings = {
+            GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.charliedeck.expressionpad.uitests;
+            PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_TARGET_NAME = ExpressionPad;
+            TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = WG6AA279AN;
+        }; };
 /* Begin PBXBuildFile section */
 		EP00000100000001 /* ExpressionPadCore in Frameworks */ = {isa = PBXBuildFile; productRef = EP00000200000002 /* ExpressionPadCore */; };
 /* End PBXBuildFile section */
@@ -51,6 +74,7 @@
 			isa = PBXGroup;
 			children = (
 				EP00000600000006 /* App */,
+                EPUI000000000001,
 				EP00000900000009 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -59,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				EP00000300000003 /* ExpressionPad.app */,
+                EPUI000000000002,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -121,6 +146,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+                EPUI000000000008,
 				EP00000500000005 /* ExpressionPad */,
 			);
 		};

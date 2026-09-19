@@ -13,7 +13,6 @@ let secFmt: (Double) -> String = { v in
 
 let semiFmt: (Int) -> String = { v in v > 0 ? "+\(v)" : String(v) }
 
-// ------------------------------------------------------------------ knob ---
 
 struct Knob: View {
     @Binding var value: Double
@@ -21,151 +20,90 @@ struct Knob: View {
     var min: Double = 0
     var max: Double = 1
     var fmt: ((Double) -> String)?
-
-    @State private var dragStart: (y: CGFloat, v: Double)?
+    @State private var dragStart: Double?
     @State private var initial: Double?
-
     private var t: Double { (value - min) / (max - min) }
 
     var body: some View {
         Widget(label: label) {
-            VStack(spacing: 1) {
-                dial
-                Text((fmt ?? percentFmt(min, max))(value))
-                    .font(Theme.font(9))
-                    .foregroundColor(Theme.accent)
+            VStack(spacing: 7) {
+                ZStack {
+                    Circle().fill(Color(hex: 0x30372b))
+                        .shadow(color: .black.opacity(0.35), radius: 1, y: 3)
+                    Circle().stroke(Color(hex: 0x929e80), style: StrokeStyle(lineWidth: 2, dash: [1, 1.8])).padding(1)
+                    Circle().fill(LinearGradient(colors: [Color(hex: 0x666e59), Color(hex: 0x38422e)], startPoint: .topLeading, endPoint: .bottomTrailing)).padding(4)
+                    Capsule().fill(Color(hex: 0xf4d5aa)).frame(width: 3, height: 11)
+                        .offset(y: -11).rotationEffect(.degrees(-135 + t * 270))
+                }.frame(width: 40, height: 40).frame(minWidth: 44, minHeight: 44)
+                Text((fmt ?? percentFmt(min, max))(value)).font(Theme.mono(11)).foregroundStyle(Theme.textDim)
             }
+            .contentShape(Rectangle())
             .onAppear { if initial == nil { initial = value } }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { g in
-                        if dragStart == nil { dragStart = (g.startLocation.y, value) }
-                        guard let start = dragStart else { return }
-                        let dv = Double(start.y - g.location.y) / 150 * (max - min)
-                        value = clamp(start.v + dv, min, max)
-                    }
-                    .onEnded { _ in dragStart = nil }
-            )
-            .onTapGesture(count: 2) {
-                if let initial { value = initial }
-            }
+            .gesture(DragGesture(minimumDistance: 4).onChanged { g in
+                if dragStart == nil { dragStart = value }
+                value = clamp((dragStart ?? value) - Double(g.translation.height) / 150 * (max - min), min, max)
+            }.onEnded { _ in dragStart = nil })
+            .onTapGesture(count: 2) { if let initial { value = initial } }
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue((fmt ?? percentFmt(min, max))(value))
         .accessibilityAdjustableAction { direction in
-            let step = (max - min) / 100
             switch direction {
-            case .increment: value = clamp(value + step, min, max)
-            case .decrement: value = clamp(value - step, min, max)
+            case .increment: value = clamp(value + (max - min) / 100, min, max)
+            case .decrement: value = clamp(value - (max - min) / 100, min, max)
             @unknown default: break
             }
         }
     }
-
-    private var dial: some View {
-        ZStack {
-            Circle()
-                .fill(Theme.widgetBg)
-            Circle()
-                .stroke(Theme.accentDim, lineWidth: 2)
-            // Cyan arc sweep from -135°.
-            Circle()
-                .trim(from: 0, to: CGFloat(t) * 0.75)
-                .rotation(.degrees(135))
-                .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .padding(1.5)
-            // Pointer.
-            Capsule()
-                .fill(Theme.text)
-                .frame(width: 2, height: 9)
-                .offset(y: -10)
-                .rotationEffect(.degrees(-135 + t * 270))
-        }
-        .frame(width: 32, height: 32)
-        .contentShape(Rectangle())
-    }
 }
-
-// ---------------------------------------------------------------- toggle ---
 
 struct ToggleSquare: View {
     @Binding var isOn: Bool
     var label: String
-
     var body: some View {
         Widget(label: label) {
-            Button {
-                isOn.toggle()
-            } label: {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isOn ? Theme.accent : Theme.widgetBg)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(isOn ? Theme.accent : Theme.accentDim, lineWidth: 1.5)
-                    )
-                    .frame(width: 34, height: 30)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .shadow(color: isOn ? Theme.accent.opacity(0.55) : .clear, radius: 8)
+            Button { isOn.toggle() } label: {
+                RoundedRectangle(cornerRadius: 1).fill(isOn ? Theme.accent : Theme.accentDim)
+                    .frame(width: 16, height: isOn ? 7 : 4).frame(width: 44, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(InstrumentButtonStyle(selected: isOn))
+            .accessibilityLabel(label).accessibilityValue(isOn ? "On" : "Off")
         }
-        .accessibilityLabel(label)
-        .accessibilityValue(isOn ? "on" : "off")
     }
 }
 
-// ---------------------------------------------------------------- select ---
-
 struct SelectMenu<T: Hashable>: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Binding var selection: T
     var label: String
     var options: [(value: T, text: String)]
-
     var body: some View {
         Widget(label: label) {
             Menu {
-                ForEach(options, id: \.value) { option in
-                    Button {
-                        selection = option.value
-                    } label: {
-                        if option.value == selection {
-                            Label(option.text, systemImage: "checkmark")
-                        } else {
-                            Text(option.text)
-                        }
-                    }
+                Picker(label, selection: $selection) {
+                    ForEach(options, id: \.value) { option in Text(option.text).tag(option.value) }
                 }
             } label: {
-                Text(options.first { $0.value == selection }?.text ?? "—")
-                    .font(Theme.font(12))
-                    .foregroundColor(Theme.text)
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .frame(minHeight: 44)
-                    .frame(maxWidth: 120)
-                    .background(Theme.widgetBg)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Theme.accentDim, lineWidth: 1)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                HStack(spacing: 8) {
+                    Text(options.first { $0.value == selection }?.text ?? "—").lineLimit(typeSize.isAccessibilitySize ? nil : 2).fixedSize(horizontal: false, vertical: true)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+                .font(Theme.font(12)).foregroundStyle(Theme.screenInk)
+                .padding(.horizontal, 10).frame(minHeight: 44).frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : 170)
+                .background(Theme.widgetBg, in: RoundedRectangle(cornerRadius: 3))
+                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.keyEdge, lineWidth: 1))
             }
+            .accessibilityLabel(label)
+            .accessibilityValue(options.first { $0.value == selection }?.text ?? "")
         }
-        .accessibilityLabel(label)
     }
 }
-
 extension SelectMenu where T == String {
     init(selection: Binding<String>, label: String, options: [String]) {
-        self.init(
-            selection: selection, label: label,
-            options: options.map { (value: $0, text: $0) }
-        )
+        self.init(selection: selection, label: label, options: options.map { ($0, $0) })
     }
 }
-
-// --------------------------------------------------------------- stepper ---
 
 struct StepperControl: View {
     @Binding var value: Int
@@ -173,108 +111,68 @@ struct StepperControl: View {
     var min: Int
     var max: Int
     var fmt: ((Int) -> String)?
-
     var body: some View {
         Widget(label: label) {
-            HStack(spacing: 2) {
-                stepButton("−") { value = Swift.max(min, value - 1) }
-                Text((fmt ?? { String($0) })(value))
-                    .font(Theme.font(12))
-                    .foregroundColor(Theme.text)
-                    .frame(minWidth: 34)
-                stepButton("+") { value = Swift.min(max, value + 1) }
+            HStack(spacing: 0) {
+                stepButton(increment: false)
+                Text((fmt ?? { String($0) })(value)).font(Theme.mono(11)).foregroundStyle(Theme.screenInk)
+                    .frame(minWidth: 32, minHeight: 32).background(Theme.widgetBg)
+                stepButton(increment: true)
             }
         }
-        .accessibilityLabel(label)
-        .accessibilityValue((fmt ?? { String($0) })(value))
     }
-
-    private func stepButton(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(symbol)
-                .font(Theme.font(15))
-                .foregroundColor(Theme.accent)
-                .frame(width: 26, height: 28)
-                .frame(minWidth: 44, minHeight: 44)
-                .background(Theme.widgetBg)
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Theme.accentDim, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-        }
-        .buttonStyle(.plain)
+    private func stepButton(increment: Bool) -> some View {
+        Button { value = clamp(value + (increment ? 1 : -1), min, max) } label: {
+            Image(systemName: increment ? "plus" : "minus").font(.system(size: 16, weight: .regular)).frame(width: 44, height: 44)
+        }.buttonStyle(InstrumentButtonStyle())
+            .disabled(increment ? value >= max : value <= min)
+            .opacity((increment ? value >= max : value <= min) ? 0.45 : 1)
+            .accessibilityLabel("\(increment ? "Increase" : "Decrease") \(label)")
+            .accessibilityValue((fmt ?? { String($0) })(value))
     }
 }
-
-// ---------------------------------------------------------------- action ---
 
 struct ActionButton: View {
     var label: String
     var action: () -> Void
-
     var body: some View {
         Widget(label: label) {
             Button(action: action) {
-                Text(label.uppercased())
-                    .font(Theme.font(11))
-                    .tracking(1.3)
-                    .foregroundColor(Theme.accent)
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .frame(minHeight: 44)
-                    .background(Theme.widgetBg)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.accentDim, lineWidth: 1.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
+                Text(label.uppercased()).font(Theme.fontMedium(11)).tracking(0.6)
+                    .padding(.horizontal, 13).frame(minHeight: 44)
+            }.buttonStyle(InstrumentButtonStyle()).accessibilityLabel(label)
         }
     }
 }
 
-// ------------------------------------------------------- widget skeleton ---
-
-/// Control + tiny tracking-wide caps label underneath, like .widget.
 struct Widget<Content: View>: View {
     var label: String
     @ViewBuilder var content: Content
-
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 7) {
             content
-            Text(label.uppercased())
-                .font(Theme.font(9))
-                .tracking(1.2)
-                .foregroundColor(Theme.textDim)
-                .lineLimit(1)
-        }
-        .frame(minWidth: 44)
+            Text(label.uppercased()).font(Theme.font(10)).tracking(0.7)
+                .foregroundStyle(Theme.textDim).lineLimit(2).multilineTextAlignment(.center)
+                .accessibilityHidden(true)
+        }.frame(minWidth: 44)
     }
 }
 
-// ----------------------------------------------------------------- group ---
-
-/// A titled group box, like the original's PADMATRIX / REVERB frames.
 struct PanelGroup<Content: View>: View {
     var title: String
     @ViewBuilder var content: Content
-
     var body: some View {
-        FlowLayout(spacing: 10) {
-            content
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(Theme.fontMedium(11)).tracking(1.1).foregroundStyle(Theme.textDim)
+                .accessibilityAddTraits(.isHeader)
+            FlowLayout(spacing: 14) { content }
         }
-        .frame(maxWidth: 340, alignment: .leading)
-        .padding(.init(top: 12, leading: 8, bottom: 6, trailing: 8))
-        .background(Theme.groupBg)
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(alignment: .topLeading) {
-            Text(title)
-                .font(Theme.font(10))
-                .tracking(1.8)
-                .foregroundColor(Theme.accent)
-                .padding(.horizontal, 6)
-                .background(Theme.groupTitleBg)
-                .offset(x: 8, y: -7)
-        }
-        .padding(.top, 7)
+        .frame(maxWidth: 350, alignment: .leading)
+        .padding(.horizontal, 4).padding(.vertical, 14)
+        .overlay(alignment: .top) { Theme.line.frame(height: 1) }
+        .id(title)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
     }
 }
 

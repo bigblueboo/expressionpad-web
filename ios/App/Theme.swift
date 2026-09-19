@@ -3,25 +3,55 @@ import SwiftUI
 import ExpressionPadCore
 
 enum Theme {
-    static let bg = Color(hex: 0x0a0e14)
-    static let padBg = Color(hex: 0x06080c)
-    static let topbarBg = Color(hex: 0x0b1018)
-    static let panelBg = Color(red: 13 / 255, green: 24 / 255, blue: 38 / 255).opacity(0.92)
-    static let groupBg = Color(red: 10 / 255, green: 18 / 255, blue: 28 / 255).opacity(0.6)
-    static let groupTitleBg = Color(hex: 0x0d1826)
-    static let line = Color(hex: 0x1f3a52)
-    static let accent = Color(hex: 0x57c7ff)
-    static let accentDim = Color(hex: 0x2a6e96)
-    static let text = Color(hex: 0xcfe6f5)
-    static let textDim = Color(hex: 0x6f93ab)
-    static let widgetBg = Color(hex: 0x0c1722)
+    static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
+        Color(uiColor: UIColor { traits in
+            let hex = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: CGFloat((hex >> 16) & 255) / 255,
+                           green: CGFloat((hex >> 8) & 255) / 255,
+                           blue: CGFloat(hex & 255) / 255, alpha: 1)
+        })
+    }
+    static let bg = adaptive(0xc5c4bb, 0x191c1a)
+    static let caseTop = adaptive(0xe8e7df, 0x343a33)
+    static let caseBottom = adaptive(0xd5d5cb, 0x252b26)
+    static let line = adaptive(0xb1b1a6, 0x535b50)
+    static let accent = Color(hex: 0xe95324)
+    static let accentDim = adaptive(0x657354, 0x96a486)
+    static let text = adaptive(0x292b27, 0xe2e5d9)
+    static let textDim = adaptive(0x555d4e, 0xbac3b0)
+    static let widgetBg = Color(hex: 0x343d2e)
+    static let screenInk = Color(hex: 0xdce3c9)
+    static let padBg = adaptive(0xb1bb9d, 0x283020)
+    static let keyTop = adaptive(0xf5f3e9, 0x4a5343)
+    static let keyBottom = adaptive(0xe3e1d7, 0x353e31)
+    static let keyEdge = adaptive(0xa7a89d, 0x69745d)
+    static let highlight = adaptive(0xfffdf2, 0x65705e)
+    static let skirt = adaptive(0xaaa79c, 0x161d15)
 
     static func font(_ size: CGFloat) -> Font {
-        .custom("AvenirNextCondensed-Regular", size: size, relativeTo: .body)
+        .custom("IBMPlexSans-Regular", size: size, relativeTo: .body)
     }
+    static func fontMedium(_ size: CGFloat) -> Font { font(size).weight(.semibold) }
+    static func mono(_ size: CGFloat) -> Font {
+        .custom("IBMPlexMono-Regular", size: size, relativeTo: .caption)
+    }
+}
 
-    static func fontMedium(_ size: CGFloat) -> Font {
-        .custom("AvenirNextCondensed-Medium", size: size, relativeTo: .body)
+struct InstrumentButtonStyle: ButtonStyle {
+    var selected = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(selected ? Theme.screenInk : Theme.text)
+            .background {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(LinearGradient(colors: selected
+                        ? [Color(hex: 0x414a38), Color(hex: 0x252e20)]
+                        : [Theme.keyTop, Theme.keyBottom], startPoint: .top, endPoint: .bottom))
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.keyEdge, lineWidth: 1))
+                    .overlay(alignment: .top) { Theme.highlight.opacity(0.65).frame(height: 1).padding(.horizontal, 3) }
+                    .shadow(color: Theme.skirt, radius: 0, y: configuration.isPressed || selected ? 1 : 3)
+            }
+            .offset(y: configuration.isPressed ? 2 : 0)
     }
 }
 
@@ -56,5 +86,16 @@ extension Store {
             get: { self.state[keyPath: keyPath] },
             set: { self.set(keyPath, $0) }
         )
+    }
+}
+
+/// Keep input tracking and the audio/MIDI router in agreement after Panic.
+extension Notification.Name {
+    static let instrumentPanic = Notification.Name("expressionpad.instrumentPanic")
+}
+extension Router {
+    func panic() {
+        allOff()
+        NotificationCenter.default.post(name: .instrumentPanic, object: self)
     }
 }

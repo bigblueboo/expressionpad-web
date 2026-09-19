@@ -1,9 +1,22 @@
 # expressionPad — native iOS app
 
 A native port of the web recreation (`../src`), which is itself a
-resurrection of the original 2017 iOS app. `../reference/DESIGN.md` remains
-ground truth for look and behavior; this port matches the web app
-feature-for-feature and knob-for-knob.
+resurrection of the original 2017 iOS app. Musical behavior follows `../reference/DESIGN.md`; the interface follows the
+current web Studio design in `../.impeccable.md`.
+
+The enclosure uses warm grey or charcoal, physical control keys and knobs,
+IBM Plex type, and a single recessed sage LCD with flat note indicators.
+System / Light / Dark is available above the playing surface and persists
+independently of the note palette. Existing saved settings keep their palette.
+
+The layout follows the available window size: controls sit above the display
+in portrait/narrow windows and beside it in wide landscape windows. Hide the
+controls for a larger playing surface. Safe areas protect the notch and home
+indicator. At accessibility text sizes, controls move into a full-height sheet
+with scrollable bank navigation. Controls support VoiceOver, adjustable knobs,
+and 44-point targets; Reduce Motion suppresses LCD ripples. Surface resizing
+preserves tracked notes, while musical geometry changes intentionally silence
+them. Panic clears audio, MIDI, touch, and keyboard state together.
 
 ## Approach and tech stack
 
@@ -59,7 +72,8 @@ ios/
     Midi.swift               CoreMIDI in/out (MPE)
     PadView.swift            UIKit multi-touch surface + CoreGraphics renderer
     ControlsView.swift, Widgets.swift, Theme.swift     ← the control panel
-  ExpressionPad.xcodeproj
+  xpad.xcodeproj
+  UITests/                   simulator theme, controls, persistence, and rotation tests
 ```
 
 ## Deliberate deviations from the web build
@@ -101,15 +115,28 @@ ios/Core/test.sh                 # works even before the Xcode license is accept
 cd ios/Core && swift test        # once `sudo xcodebuild -license accept` has been run
 ```
 
-The app itself (requires Xcode 16.4+, one-time license acceptance):
+The app itself targets iOS 18+ (verified with Xcode 26.6 / iOS 26.5 simulator):
 
 ```sh
-sudo xcodebuild -license accept  # if not yet accepted
-export DEVELOPER_DIR=~/Applications/Xcode-16.4.0.app/Contents/Developer
-xcodebuild -project ios/ExpressionPad.xcodeproj -scheme ExpressionPad \
-  -destination 'generic/platform=iOS Simulator' build
+xcodebuild -project ios/xpad.xcodeproj -scheme ExpressionPad \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+
+# Choose an installed simulator name or ID from `xcrun simctl list devices`.
+xcodebuild -project ios/xpad.xcodeproj -scheme ExpressionPad \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO test
 ```
 
-Status: all 150 core tests pass; the app target compiles and links cleanly
-against the iOS 18 simulator SDK (verified with the toolchain compiler
-directly — the `xcodebuild` path just needs the license accepted once).
+The UI tests use a separate preferences suite, covering theme selection and
+persistence, panel navigation, and portrait/landscape transitions. Run them with
+maximum accessibility text as well (`xcrun simctl ui DEVICE content_size
+accessibility-extra-extra-extra-large`; restore `large` afterward).
+
+Verified: 157 core tests pass, along with iPhone 17 Pro and iPad Pro 11-inch
+simulator UI runs across all five layouts, plus maximum accessibility text on
+iPhone in portrait and landscape. Two expert design passes approved the final
+visual direction.
+
+Core tests include palette contrast, saved-state migration, all five layouts'
+resize continuity, vibrato spring-back, expression reset, and panic behavior.
+Simulator tests do not establish physical audio latency, hardware MIDI/keyboard
+behavior, haptics, or held multi-touch continuity during OS-driven rotation.

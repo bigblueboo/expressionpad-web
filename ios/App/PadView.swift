@@ -1,6 +1,6 @@
 /// The playing surface: a UIKit view (SwiftUI gestures can't do independent
 /// multi-touch) rendering with CoreGraphics and pumping a CADisplayLink only
-/// while touches are live or the ripple field still has energy — the port of
+/// while vibrato is settling or the ripple field still has energy — the port of
 /// pad.ts. Hardware keyboards drive the kbd-* layouts via pressesBegan.
 import SwiftUI
 import UIKit
@@ -14,7 +14,8 @@ struct PadView: UIViewRepresentable {
         PadSurfaceView(store: store, sink: router)
     }
 
-    func updateUIView(_ uiView: PadSurfaceView, context: Context) {}
+    func updateUIView(_ uiView: PadSurfaceView, context: Context) { uiView.setNeedsDisplay(); uiView.setNeedsLayout() }
+    static func dismantleUIView(_ uiView: PadSurfaceView, coordinator: ()) { uiView.silence() }
 }
 
 final class PadSurfaceView: UIView {
@@ -39,7 +40,13 @@ final class PadSurfaceView: UIView {
     private var nextTouchId = 1
     private var builtSize = CGSize.zero
     private var unsubscribe: (() -> Void)?
-    private var accessibilityNoteId = 2_000_000
+    private var accessibilityNoteId = 3_000_000
+    private var touchOffsets: [Int: CGPoint] = [:]
+    private var builtOrigin = CGPoint.zero
+    private static let pixelTexture = UIGraphicsImageRenderer(size: CGSize(width: 3, height: 3)).image { renderer in
+        UIColor.black.withAlphaComponent(0.045).setFill()
+        renderer.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: 0.5, height: 0.5))
+    }
 
     init(store: Store, sink: VoiceSink) {
         self.store = store
@@ -60,7 +67,7 @@ final class PadSurfaceView: UIView {
             // Every note onset drops a "pebble" whose wave spreads across the
             // lattice — at event time, so even sub-frame taps make a splash.
             onTrigger: { [unowned self] key in
-                if self.store.state.appearance.ripples { self.field.poke(key.id, 1.3) }
+                if self.store.state.appearance.ripples && !UIAccessibility.isReduceMotionEnabled { self.field.poke(key.id, 1.3) }
             },
             onFret: { [unowned self] in self.hapticTick() }
         )
@@ -70,12 +77,20 @@ final class PadSurfaceView: UIView {
             guard let self else { return }
             if path.hasPrefix("pad") || path.hasPrefix("appearance") {
                 // Only geometry changes rebuild (and thus cancel held touches);
-                // performance knobs like slide/vib/haptic just repaint.
+                // expression changes update held voices without interrupting them.
                 if Self.geometryPaths.contains(path) { self.rebuild() }
+                else if ["pad.aftertouch", "pad.vibrato", "pad.slide", "pad.frets"].contains(path) { self.tracker.reconcileExpression() }
+                if !self.store.state.appearance.ripples { self.field = BrightnessField(self.layout.keys) }
                 self.requestRender()
             }
         }
 
+        registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitAccessibilityContrast.self]) { (view: PadSurfaceView, _: UITraitCollection) in
+            view.requestRender()
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(motionPreferenceChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(silence), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(silence), name: .instrumentPanic, object: sink)
         let proxy = PadDisplayLinkProxy(view: self)
         let link = CADisplayLink(target: proxy, selector: #selector(PadDisplayLinkProxy.tick))
         link.preferredFrameRateRange = CAFrameRateRange(
@@ -93,6 +108,7 @@ final class PadSurfaceView: UIView {
     deinit {
         displayLink?.invalidate()
         unsubscribe?()
+        NotificationCenter.default.removeObserver(self)
     }
 
     static func layoutParams(_ store: Store, _ width: Double, _ height: Double) -> LayoutParams {
@@ -125,28 +141,56 @@ final class PadSurfaceView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Only a real size change forces a rebuild (which cancels live notes);
-        // spurious layout passes must not cut a performance short.
-        if bounds.size != builtSize && bounds.width > 0 && bounds.height > 0 {
-            rebuild()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let origin = convert(CGPoint.zero, to: window)
+        if bounds.size != builtSize {
+            let previous = layout
+            builtSize = bounds.size
+            layout = buildLayout(Self.layoutParams(store, bounds.width, bounds.height))
+            tracker.reflow(from: previous)
+            field = BrightnessField(layout.keys)
+            rebuildAccessibilityElements()
             requestRender()
+        }
+        if origin != builtOrigin || !touchIds.isEmpty {
+            for (touch, id) in touchIds {
+                guard let active = tracker.active[id] else { continue }
+                let raw = touch.location(in: self)
+                touchOffsets[id] = CGPoint(x: active.x - raw.x, y: active.y - raw.y)
+            }
+            builtOrigin = origin
         }
     }
 
     private func rebuild() {
-        tracker.cancelAll()
-        touchIds.removeAll()
+        silence()
         builtSize = bounds.size
-        layout = buildLayout(PadSurfaceView.layoutParams(store, bounds.width, bounds.height))
+        layout = buildLayout(Self.layoutParams(store, max(1, bounds.width), max(1, bounds.height)))
         field = BrightnessField(layout.keys)
         rebuildAccessibilityElements()
     }
 
+    @objc func silence() {
+        keyboard?.releaseAll()
+        tracker.cancelAll()
+        touchIds.removeAll()
+        touchOffsets.removeAll()
+        field = BrightnessField(layout.keys)
+        displayLink?.isPaused = true
+        setNeedsDisplay()
+    }
+
+    @objc private func motionPreferenceChanged() {
+        field = BrightnessField(layout.keys)
+        requestRender()
+    }
+
     private func rebuildAccessibilityElements() {
         isAccessibilityElement = false
-        accessibilityElements = layout.keys.map { key in
-            let element = PadKeyAccessibilityElement(accessibilityContainer: self)
-            element.accessibilityLabel = noteName(key.note, withOctave: true)
+        let previous = accessibilityElements as? [PadKeyAccessibilityElement] ?? []
+        accessibilityElements = layout.keys.enumerated().map { index, key in
+            let element = index < previous.count ? previous[index] : PadKeyAccessibilityElement(accessibilityContainer: self)
+            element.accessibilityLabel = "\(noteName(key.note, withOctave: true)), row \(key.row + 1), column \(key.col + 1)"
             element.accessibilityHint = "Double tap to play"
             element.accessibilityTraits = [.button, .playsSound]
             element.accessibilityFrameInContainerSpace = CGRect(
@@ -156,7 +200,8 @@ final class PadSurfaceView: UIView {
                 guard let self else { return false }
                 accessibilityNoteId += 1
                 let id = accessibilityNoteId
-                tracker.down(id, key.cx, key.cy)
+                guard let current = layout.keys.first(where: { $0.id == key.id }) else { return false }
+                tracker.down(id, current.cx, current.cy)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
                     self?.tracker.up(id)
                 }
@@ -184,10 +229,11 @@ final class PadSurfaceView: UIView {
         let now = CACurrentMediaTime()
         let dt = min(0.08, max(0, now - lastFrame))
         lastFrame = now
+        tracker.advance()
         field.step(dt)
         setNeedsDisplay()
-        // Keep animating while touches are live or the field is still moving.
-        if tracker.active.isEmpty && field.energy < 0.002 {
+        // Rest the display link when the LCD and vibrato spring have settled.
+        if !tracker.needsAdvance && field.energy < 0.002 {
             displayLink?.isPaused = true
         }
     }
@@ -195,6 +241,7 @@ final class PadSurfaceView: UIView {
     // ------------------------------------------------------------ touches ---
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        becomeFirstResponder()
         // Keep the Taptic Engine warm so fret ticks land without latency.
         if store.state.pad.haptics > 0 { haptics.prepare() }
         for t in touches {
@@ -212,7 +259,8 @@ final class PadSurfaceView: UIView {
             // Coalesced touches keep 120 Hz glides smooth on ProMotion.
             for c in event?.coalescedTouches(for: t) ?? [t] {
                 let p = c.location(in: self)
-                tracker.move(tid, p.x, p.y)
+                let offset = touchOffsets[tid] ?? .zero
+                tracker.move(tid, p.x + offset.x, p.y + offset.y)
             }
         }
     }
@@ -227,7 +275,7 @@ final class PadSurfaceView: UIView {
 
     private func endTouches(_ touches: Set<UITouch>) {
         for t in touches {
-            if let tid = touchIds.removeValue(forKey: t) { tracker.up(tid) }
+            if let tid = touchIds.removeValue(forKey: t) { touchOffsets.removeValue(forKey: tid); tracker.up(tid) }
         }
     }
 
@@ -243,6 +291,17 @@ final class PadSurfaceView: UIView {
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var handled = false
         for press in presses {
+            if let key = press.key, !key.modifierFlags.intersection([.command, .control, .alternate]).isEmpty {
+                super.pressesBegan([press], with: event)
+                handled = true
+                continue
+            }
+            if press.key?.keyCode == .keyboardEscape {
+                keyboard.releaseAll()
+                resignFirstResponder()
+                handled = true
+                continue
+            }
             if let code = press.key.flatMap({ keyCodeName($0.keyCode) }) {
                 keyboard.keyDown(code)
                 handled = true
@@ -273,7 +332,11 @@ final class PadSurfaceView: UIView {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         let app = store.state.appearance
 
-        ctx.setFillColor(UIColor(Theme.padBg).cgColor)
+        let dark = traitCollection.userInterfaceStyle == .dark
+        let screen = app.scheme == "Studio"
+            ? UIColor(HSL(h: 76, s: 19, l: dark ? 16 + app.brightness * 8 : 69 + (app.brightness - 0.65) * 24))
+            : UIColor(white: dark ? 0.12 : 0.72, alpha: 1)
+        ctx.setFillColor(screen.cgColor)
         ctx.fill(bounds)
 
         var activeKeyIds: [Int: Double] = [:] // key id → pressure
@@ -284,10 +347,10 @@ final class PadSurfaceView: UIView {
         let opts = ColorOpts(
             brightness: app.brightness,
             contrast: app.contrast,
-            baseNote: store.state.pad.baseNote
+            baseNote: store.state.pad.baseNote, dark: dark
         )
         let rippleGain = 7 * app.rippleAmount
-        let labelFontName = "AvenirNextCondensed-Regular"
+        let labelFontName = "IBMPlexMono-Regular"
 
         // Whites under blacks: draw in array order (whites first per row).
         for key in layout.keys {
@@ -303,37 +366,37 @@ final class PadSurfaceView: UIView {
                     : max(-0.18, f * rippleGain * 0.35)
                 fill.l = max(3, min(94, fill.l + (90 - fill.l) * amt))
             }
-            drawKey(ctx, key, fill: fill, stroke: colors.stroke,
-                    active: active, pressure: activeKeyIds[key.id] ?? 0)
+            if active {
+                let inverseLight = (dark && app.scheme == "Studio") || colors.fill.l < 35
+                let pressure = activeKeyIds[key.id] ?? 0
+                fill = HSL(h: fill.h, s: 22, l: inverseLight ? 86 - pressure * 4 : 16 + pressure * 6)
+            }
+            let ink = labelColor(fill)
+            let isRoot = (key.note - store.state.pad.baseNote) % 12 == 0
+            drawKey(ctx, key, fill: fill, stroke: colors.stroke, ink: ink, active: active, root: isRoot)
 
             if app.labels && (key.kind != .black || key.char != nil) {
-                let labelColor = active
-                    ? UIColor(Theme.padBg.opacity(1))
-                    : UIColor(colors.label)
+                let labelColor = UIColor(ink)
                 let size = max(9, min(16, key.w * 0.22))
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: UIFont(name: labelFontName, size: size)
                         ?? UIFont.systemFont(ofSize: size),
                     .foregroundColor: labelColor,
                 ]
-                let text = noteName(key.note) as NSString
+                let text = noteName(key.note, withOctave: isRoot) as NSString
                 let bounds = text.size(withAttributes: attrs)
-                let labelY = key.kind == .white && key.char == nil
-                    ? key.y + key.h * 0.78
-                    : key.cy
+                let labelY = keyLabelY(key)
                 text.draw(
                     at: CGPoint(x: key.cx - bounds.width / 2, y: labelY - bounds.height / 2),
                     withAttributes: attrs
                 )
             }
             if app.labels, let char = key.char {
-                let size = max(8, key.w * 0.16)
+                let size = max(8, min(13, key.w * 0.16))
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: UIFont(name: labelFontName, size: size)
                         ?? UIFont.systemFont(ofSize: size),
-                    .foregroundColor: (active
-                        ? UIColor(Theme.padBg.opacity(1))
-                        : UIColor(colors.label)).withAlphaComponent(0.55),
+                    .foregroundColor: UIColor(ink),
                 ]
                 (char as NSString).draw(
                     at: CGPoint(x: key.x + key.w * 0.12, y: key.y + key.h * 0.1),
@@ -342,9 +405,19 @@ final class PadSurfaceView: UIView {
             }
         }
 
+        // One pixel matrix and protective lens span the entire display.
+        ctx.saveGState()
+        ctx.setFillColor(UIColor(patternImage: Self.pixelTexture).cgColor)
+        ctx.fill(bounds)
+        ctx.setStrokeColor(UIColor.black.withAlphaComponent(0.18).cgColor)
+        ctx.setLineWidth(3)
+        ctx.stroke(bounds.insetBy(dx: 0.5, dy: 0.5))
+        ctx.restoreGState()
+
         // Mark the mirror seam so each thumb knows its half.
         if layout.mirrored {
-            ctx.setStrokeColor(UIColor(Theme.accent).withAlphaComponent(0.22).cgColor)
+            ctx.setStrokeColor(UIColor(HSL(h: 76, s: 19, l: dark ? 80 : 24)).cgColor)
+            ctx.setLineDash(phase: 0, lengths: [4, 4])
             ctx.setLineWidth(2)
             ctx.move(to: CGPoint(x: bounds.midX, y: 0))
             ctx.addLine(to: CGPoint(x: bounds.midX, y: bounds.height))
@@ -352,47 +425,52 @@ final class PadSurfaceView: UIView {
         }
     }
 
+    private func keyInset(_ key: KeyShape) -> Double {
+        max(key.inset ?? 0, min(3, min(key.w * 0.035, key.h * 0.045)))
+    }
+
+    private func keyLabelY(_ key: KeyShape) -> Double {
+        guard key.kind == .white && key.char == nil else { return key.cy }
+        return key.y + min(key.h * 0.78, key.h - keyInset(key) - 4 - min(16, key.h * 0.23))
+    }
+
     private func drawKey(
         _ ctx: CGContext, _ key: KeyShape, fill: HSL, stroke: HSL,
-        active: Bool, pressure: Double
+        ink: HSL, active: Bool, root: Bool
     ) {
         ctx.saveGState()
-        if active {
-            ctx.setShadow(
-                offset: .zero,
-                blur: 18 + pressure * 22,
-                color: UIColor(white: 1, alpha: 0.95).cgColor
-            )
-        }
-        let fillColor = active
-            ? UIColor(white: (86 + pressure * 12) / 100, alpha: 1)
-            : UIColor(fill)
-        let strokeColor = active ? UIColor.white : UIColor(stroke)
-        ctx.setFillColor(fillColor.cgColor)
-        ctx.setStrokeColor(strokeColor.cgColor)
-        ctx.setLineWidth(active ? 2 : 1)
-
+        let gap = keyInset(key)
         let path: UIBezierPath
         if let poly = key.poly, poly.count >= 3 {
             path = UIBezierPath()
-            path.move(to: CGPoint(x: poly[0].x, y: poly[0].y))
-            for p in poly.dropFirst() { path.addLine(to: CGPoint(x: p.x, y: p.y)) }
+            let scale = max(0.1, 1 - gap * 2 / min(key.w, key.h))
+            for (index, p) in poly.enumerated() {
+                let point = CGPoint(x: key.cx + (p.x - key.cx) * scale, y: key.cy + (p.y - key.cy) * scale)
+                if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+            }
             path.close()
         } else {
-            let inset = key.inset ?? (key.kind == .black ? 1 : 1.5)
-            let r = min(6, key.w * 0.08)
-            path = UIBezierPath(
-                roundedRect: CGRect(
-                    x: key.x + inset, y: key.y + inset,
-                    width: key.w - inset * 2, height: key.h - inset * 2
-                ),
-                cornerRadius: r
-            )
+            path = UIBezierPath(roundedRect: CGRect(x: key.x + gap, y: key.y + gap,
+                width: max(0.1, key.w - gap * 2), height: max(0.1, key.h - gap * 2)), cornerRadius: 1)
         }
+        ctx.setFillColor(UIColor(fill).cgColor)
+        ctx.setStrokeColor(UIColor(stroke).cgColor)
+        ctx.setLineWidth(traitCollection.accessibilityContrast == .high ? 1.5 : 0.75)
         ctx.addPath(path.cgPath)
         ctx.drawPath(using: .fillStroke)
+        ctx.setFillColor(UIColor(ink).cgColor)
+        let labelY = keyLabelY(key)
+        if root {
+            let width = min(20, key.w * 0.27)
+            ctx.fill(CGRect(x: key.cx - width / 2, y: min(labelY + min(16, key.h * 0.23), key.y + key.h - gap - 4), width: width, height: 2))
+        }
+        if active {
+            let size = max(2, min(4, min(key.w * 0.08, key.h * 0.08)))
+            ctx.fill(CGRect(x: key.cx - size / 2, y: labelY - min(19, key.h * 0.27), width: size, height: size))
+        }
         ctx.restoreGState()
     }
+
 }
 
 private final class PadDisplayLinkProxy: NSObject {
