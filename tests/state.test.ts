@@ -82,6 +82,18 @@ describe('Store', () => {
     }
   })
 
+  it('defaults stale or invalid themes to System and retains explicit choices', () => {
+    expect(Store.load('old-theme').state.appearance.theme).toBe('system')
+    for (const theme of ['light', 'dark', 'system']) {
+      const store = Store.load('theme-choice')
+      store.set('appearance.theme', theme)
+      store.flushSave()
+      expect(Store.load('theme-choice').state.appearance.theme).toBe(theme)
+    }
+    localStorage.setItem('bad-theme', JSON.stringify({ appearance: { theme: 'sepia' } }))
+    expect(Store.load('bad-theme').state.appearance.theme).toBe('system')
+  })
+
   it('survives corrupted persisted state', () => {
     localStorage.setItem('bad-key', '{not json')
     const loaded = Store.load('bad-key')

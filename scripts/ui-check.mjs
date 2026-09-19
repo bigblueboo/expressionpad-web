@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'vite'
 
 const server = await createServer({
-  server: { host: '127.0.0.1', port: 0 },
+  server: { host: '127.0.0.1', port: 0, strictPort: false },
   logLevel: 'error',
 })
 let browser
@@ -22,6 +22,44 @@ try {
     hasTouch: true,
   })
   await page.goto(`${base}?rows=5&cols=7`, { waitUntil: 'networkidle0' })
+  // System tracks live OS changes; explicit choices override them and persist.
+  const theme = () => page.$eval('html', (el) => el.dataset.theme)
+  await page.emulateMediaFeatures([
+    { name: 'prefers-color-scheme', value: 'dark' },
+  ])
+  await page.waitForFunction(
+    () => document.documentElement.dataset.theme === 'dark',
+  )
+  assert.equal(
+    await page.$eval('.theme-control select', (el) => el.value),
+    'system',
+  )
+  await page.select('.theme-control select', 'light')
+  assert.equal(await theme(), 'light')
+  await page.emulateMediaFeatures([
+    { name: 'prefers-color-scheme', value: 'light' },
+  ])
+  await page.select('.theme-control select', 'dark')
+  assert.equal(await theme(), 'dark')
+  await page.reload({ waitUntil: 'networkidle0' })
+  assert.equal(
+    await theme(),
+    'dark',
+    'Explicit dark persists despite light OS preference',
+  )
+  assert.equal(
+    await page.$eval('.theme-control select', (el) => el.value),
+    'dark',
+  )
+  await page.select('.theme-control select', 'system')
+  assert.equal(await theme(), 'light')
+  await page.emulateMediaFeatures([
+    { name: 'prefers-color-scheme', value: 'dark' },
+  ])
+  await page.waitForFunction(
+    () => document.documentElement.dataset.theme === 'dark',
+  )
+  await page.select('.theme-control select', 'light')
   await page.select('.bank-select', 'appearance')
   assert.ok(
     await page.$eval('.panel', (el) => el.scrollTop > 0),
@@ -197,7 +235,7 @@ try {
   )
   assert.deepEqual(errors, [])
   console.log(
-    'UI checks passed: bank/source controls, persistence, collapsed focus, and held-note reflow in all five layouts.',
+    'UI checks passed: saved/system themes, bank/source controls, persistence, collapsed focus, and held-note reflow in all five layouts.',
   )
 } finally {
   await browser?.close()

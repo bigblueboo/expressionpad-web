@@ -1,6 +1,6 @@
 /**
  * PadView — renders the playing surface to a canvas and feeds pointer
- * events to a TouchTracker. Touched keys glow white; each new touch pokes
+ * events to a TouchTracker. Touched regions invert on a shared LCD; each new touch pokes
  * a BrightnessField whose fluid-like wave spreads across neighboring keys.
  */
 import { buildLayout, type Layout, type KeyShape } from '../core/layout'
@@ -8,7 +8,7 @@ import { rowOffsets, SCALES } from '../core/scales'
 import { noteName } from '../core/notes'
 import type { Store } from '../core/state'
 import { TouchTracker, touchesToPad } from './touch'
-import { keyColors, keyMaterial, parseHsl, type KeyMaterial } from './colors'
+import { keyColors, labelColor, parseHsl, type KeyColors } from './colors'
 import { BrightnessField } from './field'
 import type { VoiceSink } from '../audio/sink'
 
@@ -300,10 +300,16 @@ export class PadView {
     const { width, height } = this.layout.params
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
-    ctx.fillStyle = '#292e26'
+    const app = this.store.state.appearance
+    const dark = document.documentElement.dataset.theme === 'dark'
+    ctx.fillStyle =
+      app.scheme === 'Studio'
+        ? `hsl(76, 19%, ${dark ? 16 + app.brightness * 8 : 69 + (app.brightness - 0.65) * 24}%)`
+        : dark
+          ? '#20271e'
+          : '#bac1ad'
     ctx.fillRect(0, 0, width, height)
 
-    const app = this.store.state.appearance
     const activeKeyIds = new Map<number, number>() // key id → pressure
     for (const t of this.tracker.active.values()) {
       activeKeyIds.set(
@@ -320,6 +326,7 @@ export class PadView {
     this.field.step(dt)
 
     const opts = {
+      dark,
       brightness: app.brightness,
       contrast: app.contrast,
       baseNote: this.store.state.pad.baseNote,
@@ -346,113 +353,126 @@ export class PadView {
         }
       }
       const pressure = activeKeyIds.get(key.id) ?? 0
-      const material = keyMaterial(
-        active ? `hsl(29, 70%, ${77 + pressure * 8}%)` : fill,
-      )
-      this.drawKey(ctx, key, material, colors.stroke, active)
+      // One glass display, flat LCD regions. Held notes invert instead of
+      // moving like keycaps; the marker also communicates state without color.
+      const isRoot = (key.note - this.store.state.pad.baseNote) % 12 === 0
+      const ink = app.scheme === 'Studio' ? 76 : (parseHsl(fill)?.h ?? 76)
+      if (active) {
+        const invertLight =
+          (dark && app.scheme === 'Studio') ||
+          (parseHsl(colors.fill)?.l ?? 70) < 35
+        fill = `hsl(${ink}, 22%, ${invertLight ? 86 - pressure * 4 : 16 + pressure * 6}%)`
+      }
+      const face = { fill, label: labelColor(fill), stroke: colors.stroke }
+      this.drawKey(ctx, key, face, active, isRoot)
       if (app.labels && (key.kind !== 'black' || key.char)) {
-        ctx.fillStyle = material.label
-        ctx.font = `${Math.max(9, Math.min(16, key.w * 0.22))}px 'IBM Plex Sans', sans-serif`
+        ctx.fillStyle = face.label
+        ctx.font = `${Math.max(9, Math.min(16, key.w * 0.22))}px 'IBM Plex Mono', monospace`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        const labelY =
-          key.kind === 'white' && !key.char ? key.y + key.h * 0.78 : key.cy
-        const isRoot = (key.note - this.store.state.pad.baseNote) % 12 === 0
-        const pressOffset = active ? Math.min(3, key.h * 0.07) * 0.75 : 0
-        ctx.fillText(noteName(key.note, isRoot), key.cx, labelY + pressOffset)
+        const labelY = keyLabelY(key)
+        ctx.fillText(noteName(key.note, isRoot), key.cx, labelY)
       }
       if (app.labels && key.char) {
         ctx.save()
         ctx.globalAlpha = 1
-        ctx.fillStyle = material.label
-        ctx.font = `${Math.max(8, key.w * 0.16)}px 'IBM Plex Sans', sans-serif`
+        ctx.fillStyle = face.label
+        ctx.font = `${Math.max(8, Math.min(13, key.w * 0.16))}px 'IBM Plex Mono', monospace`
         ctx.textAlign = 'left'
         ctx.textBaseline = 'top'
-        ctx.fillText(
-          key.char,
-          key.x + key.w * 0.12,
-          key.y + key.h * 0.1 + (active ? Math.min(3, key.h * 0.07) * 0.75 : 0),
-        )
+        ctx.fillText(key.char, key.x + key.w * 0.12, key.y + key.h * 0.1)
         ctx.restore()
       }
     }
 
     // Mark the mirror seam so each thumb knows its half.
     if (this.layout.mirrored) {
-      ctx.strokeStyle = 'rgba(233, 116, 65, 0.65)'
+      ctx.strokeStyle = dark ? '#d5dfbd' : '#34412d'
+      ctx.setLineDash([4, 4])
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(width / 2, 0)
       ctx.lineTo(width / 2, height)
       ctx.stroke()
+      ctx.setLineDash([])
     }
   }
 
   private drawKey(
     ctx: CanvasRenderingContext2D,
     key: KeyShape,
-    face: KeyMaterial,
-    stroke: string,
+    face: KeyColors,
     active: boolean,
+    isRoot: boolean,
   ): void {
     ctx.save()
-    const gap = Math.min(3.5, key.w * 0.045, key.h * 0.06)
-    const depth = Math.min(3, key.h * 0.07)
-    const pressed = active ? depth * 0.75 : 0
-    const path = (inset: number, offset: number) => {
-      ctx.beginPath()
-      if (key.poly) {
-        const scale = Math.max(0.1, 1 - (inset * 2) / Math.min(key.w, key.h))
-        key.poly.forEach(([x, y], i) => {
-          const px = key.cx + (x - key.cx) * scale
-          const py = key.cy + (y - key.cy) * scale + offset
-          if (i === 0) ctx.moveTo(px, py)
-          else ctx.lineTo(px, py)
-        })
-        ctx.closePath()
-      } else {
-        const baseInset = key.inset ?? 0
-        const i = Math.max(baseInset, inset)
-        const w = Math.max(0.1, key.w - i * 2)
-        const h = Math.max(0.1, key.h - i * 2 - depth)
-        roundRect(
-          ctx,
-          key.x + i,
-          key.y + i + offset,
-          w,
-          h,
-          Math.min(6, w * 0.08, h * 0.15),
-        )
-      }
+    const gap = keyInset(key)
+    ctx.beginPath()
+    if (key.poly) {
+      const scale = Math.max(0.1, 1 - (gap * 2) / Math.min(key.w, key.h))
+      key.poly.forEach(([x, y], i) => {
+        const px = key.cx + (x - key.cx) * scale
+        const py = key.cy + (y - key.cy) * scale
+        if (i === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      })
+      ctx.closePath()
+    } else {
+      const inset = Math.max(key.inset ?? 0, gap)
+      roundRect(
+        ctx,
+        key.x + inset,
+        key.y + inset,
+        Math.max(0.1, key.w - inset * 2),
+        Math.max(0.1, key.h - inset * 2),
+        1,
+      )
     }
-    // A dark skirt and bevel give every layout the same molded key construction.
-    path(gap, depth)
-    ctx.fillStyle = stroke
+    ctx.fillStyle = face.fill
     ctx.fill()
-    const material = ctx.createLinearGradient(
-      key.x,
-      key.y,
-      key.x + key.w * 0.3,
-      key.y + key.h,
-    )
-    material.addColorStop(0, face.top)
-    material.addColorStop(1, face.bottom)
-    path(gap, pressed)
-    ctx.fillStyle = material
-    ctx.fill()
-    ctx.strokeStyle = active ? '#f8c497' : stroke
-    ctx.lineWidth = 0.7
+    ctx.strokeStyle = face.stroke
+    ctx.lineWidth = 0.75
     ctx.stroke()
-    // Fine directional highlights stay inside the face rather than glowing outside it.
-    ctx.save()
-    ctx.clip()
-    path(gap + 0.7, pressed + 0.8)
-    ctx.strokeStyle = 'rgba(255, 251, 231, 0.18)'
-    ctx.lineWidth = 1
-    ctx.stroke()
-    ctx.restore()
+    // Root bars and held-note squares are pixels on the display, including
+    // with labels hidden. Keep piano-white markers clear of overlapping blacks.
+    const labelY = keyLabelY(key)
+    ctx.fillStyle = face.label
+    if (isRoot) {
+      const width = Math.min(20, key.w * 0.27)
+      ctx.fillRect(
+        key.cx - width / 2,
+        Math.min(labelY + Math.min(16, key.h * 0.23), key.y + key.h - gap - 4),
+        width,
+        2,
+      )
+    }
+    if (active) {
+      const size = Math.max(2, Math.min(4, key.w * 0.08, key.h * 0.08))
+      ctx.fillRect(
+        key.cx - size / 2,
+        labelY - Math.min(19, key.h * 0.27),
+        size,
+        size,
+      )
+    }
     ctx.restore()
   }
+}
+
+function keyInset(key: KeyShape): number {
+  return Math.max(key.inset ?? 0, Math.min(3, key.w * 0.035, key.h * 0.045))
+}
+
+/** Reserve room for the root bar even when a piano row is short. */
+function keyLabelY(key: KeyShape): number {
+  if (key.kind !== 'white' || key.char) return key.cy
+  return (
+    key.y +
+    Math.min(
+      key.h * 0.78,
+      key.h - keyInset(key) - 4 - Math.min(16, key.h * 0.23),
+    )
+  )
 }
 
 function roundRect(

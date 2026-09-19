@@ -1,6 +1,6 @@
 /**
  * Key coloring schemes, riffing on the original app's looks:
- * Studio (warm keycaps with orange roots), Ocean (blue grid), Magenta (red/pink pianos), Rainbow (colored hexes),
+ * Studio (sage LCD with dark root markers), Ocean (blue grid), Magenta (red/pink pianos), Rainbow (colored hexes),
  * Mono (grayscale hexes/pianos).
  */
 import type { KeyShape } from '../core/layout'
@@ -22,6 +22,8 @@ export const SCHEME_NAMES = [
 export type SchemeName = (typeof SCHEME_NAMES)[number]
 
 export interface ColorOpts {
+  /** Dim the Studio LCD along with the enclosure. */
+  dark?: boolean
   /** 0..1 overall brightness. */
   brightness: number
   /** 0..1 light/dark spread between piano whites and blacks. */
@@ -43,16 +45,31 @@ function schemeHsl(scheme: string, key: KeyShape, opts: ColorOpts): HSL {
   const isRoot = fromRoot === 0
   switch (scheme) {
     case 'Studio': {
-      const black =
-        key.kind === 'black' ||
-        ((key.kind === 'rect' || key.kind === 'hex') && BLACK_PCS.has(pc))
+      const black = key.kind === 'black'
+      const accidental = BLACK_PCS.has(pc) && key.kind !== 'white'
       const c = opts.contrast
+      if (opts.dark) {
+        return {
+          h: 76,
+          s: 17,
+          l:
+            (black
+              ? 14 - 4 * c
+              : isRoot
+                ? 37 + 3 * c
+                : accidental
+                  ? 21 - 5 * c
+                  : 28 + 6 * c) *
+            (0.7 + 0.45 * opts.brightness),
+        }
+      }
       return {
-        h: isRoot ? 16 : 48,
-        s: isRoot ? 79 : black ? 5 : 10,
-        l:
-          (isRoot ? 55 + 3 * c : black ? 28 - 12 * c : 65 + 16 * c) *
-          (0.72 + 0.4 * opts.brightness),
+        h: 76,
+        s: 19,
+        l: black
+          ? 27 - 10 * c
+          : (isRoot ? 66 + 4 * c : accidental ? 66 - 8 * c : 72 + 8 * c) +
+            (opts.brightness - 0.65) * 24,
       }
     }
     case 'Rainbow':
@@ -117,27 +134,7 @@ export function keyColors(
   return { fill, stroke, label }
 }
 
-export interface KeyMaterial {
-  top: string
-  bottom: string
-  label: string
-}
-
-/** Keep the physical highlight subtle enough for the printed legend to read. */
-export function keyMaterial(fill: string): KeyMaterial {
-  const { h, s, l } = parseHsl(fill)!
-  const label = labelColor(fill)
-  const top = `hsl(${h}, ${s}%, ${Math.min(95, l + 4)}%)`
-  const bottom = `hsl(${h}, ${s}%, ${Math.max(4, l - 3)}%)`
-  // Mid-luminance colors have little contrast headroom; their bevel supplies
-  // depth while the face stays even. This also covers bright ripple crests.
-  if (Math.min(contrastRatio(label, top), contrastRatio(label, bottom)) < 4.5) {
-    return { top: fill, bottom: fill, label }
-  }
-  return { top, bottom, label }
-}
-
-/** Re-evaluate labels against the current face, including bright ripple crests. */
+/** Re-evaluate labels against the current LCD region, including bright ripple crests. */
 export function labelColor(fill: string): string {
   const h = parseHsl(fill)?.h ?? 48
   const dark = `hsl(${h}, 10%, 1%)`

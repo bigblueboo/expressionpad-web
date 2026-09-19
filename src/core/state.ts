@@ -83,6 +83,7 @@ export interface MidiConfig {
 }
 
 export interface AppearanceConfig {
+  theme: 'system' | 'light' | 'dark'
   scheme: string
   labels: boolean
   brightness: number
@@ -157,7 +158,7 @@ export function defaultState(): AppState {
       inEnabled: false, inputId: '', localSound: true,
     },
     appearance: {
-      scheme: 'Studio', labels: true, brightness: 0.65,
+      theme: 'system', scheme: 'Studio', labels: true, brightness: 0.65,
       ripples: true, rippleAmount: 0.5, contrast: 0.5,
     },
     ui: { panelOpen: true, tab: 'pad' },
@@ -366,6 +367,7 @@ export function sanitizeState(state: AppState): AppState {
   state.midi.inEnabled = bool(state.midi.inEnabled, d.midi.inEnabled)
   state.midi.inputId = string(state.midi.inputId, d.midi.inputId)
   state.midi.localSound = bool(state.midi.localSound, d.midi.localSound)
+  if (!['system', 'light', 'dark'].includes(state.appearance.theme)) state.appearance.theme = d.appearance.theme
   if (!SCHEMES.has(state.appearance.scheme)) state.appearance.scheme = d.appearance.scheme
   state.appearance.labels = bool(state.appearance.labels, d.appearance.labels)
   state.appearance.brightness = finite(state.appearance.brightness, d.appearance.brightness, 0, 1)

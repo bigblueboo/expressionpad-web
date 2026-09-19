@@ -544,14 +544,34 @@ button:active {
   flex: 1;
   min-height: 0;
   position: relative;
-  border: 5px solid #52574b;
+  border: 6px solid #41483a;
   border-radius: 6px;
-  background: #292e26;
+  background: #b1bb9d;
   box-shadow:
     0 1px #fcfbed,
     0 -1px #a0a493,
     inset 0 2px 5px #141a13;
   overflow: hidden;
+}
+/* A single protective lens and pixel matrix span every layout. */
+.pad-container::before,
+.pad-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.pad-container::before {
+  background-image: radial-gradient(#25351a 0.4px, transparent 0.6px);
+  background-size: 3px 3px;
+  opacity: 0.045;
+}
+.pad-container::after {
+  background: linear-gradient(155deg, #fffce50a, transparent 48%, #26341a08);
+  box-shadow:
+    inset 0 2px 7px #1c291950,
+    inset 0 0 1px 1px #1c29192b;
 }
 .pad-canvas {
   position: absolute;
@@ -1073,4 +1093,146 @@ button:active {
   .display-label {
     font-size: 10px;
   }
+}
+
+/* Theme stays within reach when the sound-design banks are collapsed. */
+.surface-detail {
+  margin-left: auto;
+}
+.theme-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  color: var(--text-dim);
+  font: 10px var(--font);
+}
+.theme-control > span {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.theme-control select {
+  min-height: 28px;
+  width: 82px;
+  padding: 0 4px 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--case);
+  color: var(--text);
+  font: 11px var(--mono);
+}
+@media (pointer: coarse) {
+  .theme-control select {
+    min-height: 44px;
+  }
+}
+@media (max-width: 600px) {
+  .surface-strip {
+    gap: 6px;
+  }
+  .theme-control {
+    gap: 4px;
+  }
+  .theme-control select {
+    width: 76px;
+  }
+  .surface-title::before {
+    margin-right: 4px;
+  }
+}
+@media (max-height: 500px) and (min-width: 601px) {
+  #app {
+    grid-template-rows: auto auto 44px minmax(0, 1fr) 30px 23px;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #191c1a;
+  --case: #303630;
+  --line: #535b50;
+  --text: #e2e5d9;
+  --text-dim: #b3bcaa;
+  --key-shadow: inset 0 1px #65705e, 0 2px #161d15, 0 3px 2px #080d0866;
+}
+:root[data-theme='dark'] body {
+  background:
+    radial-gradient(ellipse at 30% 0, #373e34, transparent 70%), var(--bg);
+}
+:root[data-theme='dark'] :focus-visible {
+  outline-color: #ff9966;
+}
+:root[data-theme='dark'] #app {
+  border-color: #636d5a;
+  background: linear-gradient(115deg, #343a33, #252b26);
+  box-shadow:
+    inset 0 2px 1px #626b59,
+    inset -1px 0 1px #1c241b,
+    0 3px #171e16,
+    0 6px #10160f,
+    0 8px 3px #080e0840,
+    0 20px 35px -15px #000a;
+}
+:root[data-theme='dark'] .tab,
+:root[data-theme='dark'] .chevron,
+:root[data-theme='dark'] .action-btn,
+:root[data-theme='dark'] .stepper-btn,
+:root[data-theme='dark'] .toggle {
+  background: linear-gradient(#4a5343, #353e31);
+  border-color: #69745d;
+  color: var(--text);
+}
+:root[data-theme='dark'] .tab.active {
+  background: linear-gradient(#242c21, #192017);
+  box-shadow:
+    inset 0 1px 3px #0c130a,
+    0 1px #617058;
+  border-color: #78836c;
+}
+:root[data-theme='dark'] .toggle.on {
+  background: linear-gradient(#242e20, #303a2b);
+  box-shadow:
+    inset 0 1px 3px #10190c,
+    0 1px #617058;
+}
+:root[data-theme='dark'] .group-title,
+:root[data-theme='dark'] .widget-label,
+:root[data-theme='dark'] .knob-readout,
+:root[data-theme='dark'] .midi-status,
+:root[data-theme='dark'] .panel-nav button {
+  color: var(--text-dim);
+}
+:root[data-theme='dark'] .stepper-value {
+  color: var(--screen-ink);
+  background: #252e20;
+  border-color: #536046;
+}
+:root[data-theme='dark'] .select {
+  box-shadow:
+    inset 0 2px 3px #111b0e,
+    0 1px #66725b;
+}
+:root[data-theme='dark'] .display-source .select {
+  box-shadow: none;
+}
+:root[data-theme='dark'] .instrument-display {
+  box-shadow:
+    inset 0 2px 5px #0d130ab3,
+    0 1px #758067,
+    0 -1px #1d2817;
+}
+:root[data-theme='dark'] .pad-container {
+  border-color: #1c2419;
+  box-shadow:
+    0 1px #7a866b,
+    0 -1px #11190d;
+}
+:root[data-theme='dark'] .panel {
+  scrollbar-color: #78856b #232c1e;
+}
+:root[data-theme='dark'] .pad-accessible-keys button {
+  background: var(--case);
+}
+:root[data-theme='dark'] .stepper-btn:disabled {
+  box-shadow: inset 0 1px #65705e;
 }

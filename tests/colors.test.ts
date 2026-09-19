@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   contrastRatio,
   keyColors,
-  keyMaterial,
   labelColor,
   parseHsl,
   SCHEME_NAMES,
@@ -128,13 +127,25 @@ describe('key colors', () => {
         expect(contrastRatio(labelColor(fill), fill)).toBeGreaterThanOrEqual(
           4.5,
         )
-        const material = keyMaterial(fill)
-        expect(
-          contrastRatio(material.label, material.top),
-        ).toBeGreaterThanOrEqual(4.5)
-        expect(
-          contrastRatio(material.label, material.bottom),
-        ).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+
+  it('dims the Studio LCD in dark mode while keeping labels readable', () => {
+    for (const kind of ['rect', 'hex', 'white', 'black'] as const) {
+      for (let note = 48; note < 60; note++) {
+        const light = keyColors('Studio', key(note, kind), opts)
+        for (const brightness of [0, 0.65, 1]) {
+          const dark = keyColors('Studio', key(note, kind), {
+            ...opts,
+            dark: true,
+            brightness,
+          })
+          expect(parseHsl(dark.fill)!.l).toBeLessThan(parseHsl(light.fill)!.l)
+          expect(contrastRatio(dark.label, dark.fill)).toBeGreaterThanOrEqual(
+            4.5,
+          )
+        }
       }
     }
   })

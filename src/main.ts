@@ -9,6 +9,7 @@ import { PadView } from './ui/pad'
 import { KeyboardInput } from './ui/keyboard'
 import { buildControls } from './ui/controls'
 import { TiltSource } from './ui/tilt'
+import { bindTheme } from './ui/theme'
 
 const app = document.getElementById('app')!
 const store = Store.load()
@@ -29,6 +30,7 @@ const urlMap: Record<string, [path: string, parse: (v: string) => unknown]> = {
   press: ['expr.pressure', String],
   tilt: ['expr.tilt', String],
   scheme: ['appearance.scheme', String],
+  theme: ['appearance.theme', String],
   panel: ['ui.panelOpen', (v) => v !== '0'],
   tab: ['ui.tab', String],
   voice: ['voice', String],
@@ -59,6 +61,22 @@ const surfaceStrip = document.createElement('div')
 surfaceStrip.className = 'surface-strip'
 surfaceStrip.innerHTML =
   '<span class="surface-title">Playing surface</span><span class="surface-detail"></span>'
+const themeControl = document.createElement('label')
+themeControl.className = 'theme-control'
+themeControl.innerHTML = `<span>Theme</span><select aria-label="Theme">
+  <option value="system">System</option>
+  <option value="light">Light</option>
+  <option value="dark">Dark</option>
+</select>`
+const themeSelect = themeControl.querySelector('select')!
+themeSelect.value = store.state.appearance.theme
+themeSelect.addEventListener('change', () =>
+  store.set('appearance.theme', themeSelect.value),
+)
+store.subscribe((state) => {
+  themeSelect.value = state.appearance.theme
+})
+surfaceStrip.appendChild(themeControl)
 app.appendChild(surfaceStrip)
 const syncSurface = () => {
   const p = store.state.pad
@@ -98,6 +116,7 @@ store.subscribe((_s, path) => {
 })
 
 const pad = new PadView(store, router, padContainer)
+bindTheme(store, () => pad.requestRender())
 
 // Typing-keyboard input drives the kbd-* layouts.
 const keyboard = new KeyboardInput(() => pad.currentLayout, pad.tracker)
